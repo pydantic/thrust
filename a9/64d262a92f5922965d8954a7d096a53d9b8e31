@@ -1,0 +1,40 @@
+index.html
+  s_b20fbaf61e249b::t_b3d77d35222a9c 20-102,107-110,112-115
+  s_b20fbaf61e249b::t_9227ae064281f5 111
+README.md
+  s_b20fbaf61e249b::t_9227ae064281f5 14
+  s_b20fbaf61e249b::t_b3d77d35222a9c 16-19,38-39
+  s_b20fbaf61e249b::t_f482bd4c936981 81-82
+CLAUDE.md
+  s_b20fbaf61e249b::t_b3d77d35222a9c 54-57
+src/render.ts
+  s_b20fbaf61e249b::t_b3d77d35222a9c 22,289,311-315
+src/physics.ts
+  s_b20fbaf61e249b::t_f482bd4c936981 13-15
+src/main.ts
+  s_b20fbaf61e249b::t_b3d77d35222a9c 1-2,18-19,68,70-88,112-116,118,121,123,143-147,150,158-159,166
+src/client.ts
+  s_b20fbaf61e249b::t_b3d77d35222a9c 14-15,25-26,29,56-57,81-88
+src/input.ts
+  s_b20fbaf61e249b::t_9227ae064281f5 30
+src/dialog.ts
+  s_b20fbaf61e249b::t_553921e8329a92 18
+  s_b20fbaf61e249b::t_9227ae064281f5 32-40
+  s_b20fbaf61e249b::t_b3d77d35222a9c 1-17,19-31,41-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a964d262a92f5922965d8954a7d096a53d9b8e31",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
