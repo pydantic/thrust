@@ -1,0 +1,23 @@
+src/main.ts
+  s_b20fbaf61e249b::t_46af56b80e496f 2,71,95,190-202
+README.md
+  s_b20fbaf61e249b::t_46af56b80e496f 17-19
+src/dialog.ts
+  s_b20fbaf61e249b::t_46af56b80e496f 102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "00b66ceffe2d461b4e746aef59007803b6d06fdb",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
