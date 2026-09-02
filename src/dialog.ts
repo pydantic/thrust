@@ -99,7 +99,7 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
 }
 
 /** Accepts a non-negative integer; anything else is undefined. */
-function parseSeed(text: string): number | undefined {
+export function parseSeed(text: string): number | undefined {
   const trimmed = text.trim();
   if (!/^\d{1,10}$/.test(trimmed)) return undefined;
   const n = Number(trimmed);

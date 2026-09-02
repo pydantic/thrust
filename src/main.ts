@@ -1,5 +1,5 @@
 import { connectServer, type ServerClient } from "./client";
-import { createDialog, type ShowOptions } from "./dialog";
+import { createDialog, parseSeed, type ShowOptions } from "./dialog";
 import { attachKeyboard } from "./input";
 import { createRocket, DT, type Inputs, PHYSICS, type Rocket, restingY, step } from "./physics";
 import type { StateMessage } from "./protocol";
@@ -68,7 +68,7 @@ function main(): void {
   const renderer = new Renderer(canvas);
   const keyboard = attachKeyboard(window);
   let server: ServerClient | null = null;
-  let game = spawn();
+  let game = spawn(seedFromUrl());
   let endDialogTimer: number | undefined;
   let connectTimer: number | undefined;
 
@@ -92,6 +92,7 @@ function main(): void {
       }
       game = spawn(seed);
       resize();
+      writeSeedToUrl(game.world.seed);
     },
   });
   const openDialog = (options?: ShowOptions): void => {
@@ -186,7 +187,19 @@ function main(): void {
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
-  dialog.show();
+  dialog.show({ seed: game.world.seed });
+}
+
+/** `?seed=N` in the URL, so a reload reruns the same game. */
+function seedFromUrl(): number | undefined {
+  const raw = new URLSearchParams(window.location.search).get("seed");
+  return raw === null ? undefined : parseSeed(raw);
+}
+
+function writeSeedToUrl(seed: number): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("seed", String(seed));
+  window.history.replaceState(null, "", url);
 }
 
 main();
