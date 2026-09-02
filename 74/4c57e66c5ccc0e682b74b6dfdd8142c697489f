@@ -1,0 +1,39 @@
+server/thrust_server/autopilot.py
+  s_b20fbaf61e249b::t_c2a8296b0f0135 6-7,132-135,143,148-149,152-156,281-282,284-285,288-296,298-299,301-307,310-341,346-355,364-365,367-370,372-390,404-406,408-419,421-422,424-435,437-443,445,447-448,450-452,455,466,469-470,476,479-488,490-492,494-498
+  s_b20fbaf61e249b::t_50685cffbdecbe 456-457,459-462
+  s_b20fbaf61e249b::t_72551d2f48f3d6 403
+src/client.ts
+  s_b20fbaf61e249b::t_4d45a58885dd9c 7-8,59,65-69
+server/thrust_server/agent.py
+  s_b20fbaf61e249b::t_c2a8296b0f0135 88-91
+server/thrust_server/main.py
+  s_b20fbaf61e249b::t_4d45a58885dd9c 31-32,113-116,120
+  s_b20fbaf61e249b::t_c2a8296b0f0135 21,24,85-86,90,97-112,117-119,121-124,128-132,134-137
+server/tests/test_autopilot.py
+  s_b20fbaf61e249b::t_054a26977514d3 168-169,173-177,194-217,220,225-247
+  s_b20fbaf61e249b::t_4d45a58885dd9c 25,371,386-388
+server/tests/test_ws.py
+  s_b20fbaf61e249b::t_4d45a58885dd9c 3,5,13,20-21
+  s_b20fbaf61e249b::t_957709236bb864 14-19
+CLAUDE.md
+  s_b20fbaf61e249b::t_4d45a58885dd9c 12,82
+  s_b20fbaf61e249b::t_f69fa09dcdc7aa 76-81,83-86,89-90
+README.md
+  s_b20fbaf61e249b::t_4d45a58885dd9c 65,133-134,173-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "744c57e66c5ccc0e682b74b6dfdd8142c697489f",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
