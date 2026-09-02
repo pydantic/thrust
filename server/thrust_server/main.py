@@ -3,6 +3,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import logfire
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from pydantic_monty import AsyncMonty
@@ -34,6 +35,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title='thrust-server', lifespan=lifespan)
+
+# Traces go to Logfire when LOGFIRE_TOKEN is set; otherwise they stay local.
+logfire.configure(service_name='thrust-server')
+logfire.instrument_fastapi(app)
+logfire.instrument_pydantic_ai()
 
 
 @app.get('/health')

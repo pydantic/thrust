@@ -70,7 +70,11 @@ overlay in `index.html`); unticking it closes the socket. The game loop pauses w
 open, and a landed/crashed outcome reopens it after a short delay. The socket survives restarts, so
 the server side (`AgentPilot.decide`) treats a tick reset, or a flying state after a terminal one, as
 a new flight: it closes the running script, records a `RunReport` in the process-wide `PilotMemory`
-and asks the agent for a new script. Scripts pass a pre-flight check (a few synthetic ticks) before
+and asks the agent for a new script. The agent's output is a `submit_script` tool call; `PilotMemory`
+keeps the last `AgentRunResult`, and the report is fed back as that call's result via
+`all_messages(output_tool_return_content=...)` before the next run continues the conversation with no
+new user prompt, so nothing about earlier flights is pasted into prompts. A `ProcessHistory`
+capability trims the history to the goal message plus the last few script/result pairs. Scripts pass a pre-flight check (a few synthetic ticks) before
 they fly; the tests drive the real monty runtime with fake code writers and `FunctionModel`, and
 `tests/conftest.py` blocks real model requests.
 

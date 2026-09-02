@@ -5,7 +5,18 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolOutput,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_monty import AsyncMonty
 
@@ -76,6 +87,19 @@ def writer(code: str) -> Any:  # noqa: ANN401 - callable of a fixed shape, see W
 
 async def fake_ai(query: str) -> str:
     return f'climb, then cross ({query[:20]})'
+
+
+def submit(code: str) -> ModelResponse:
+    """A model reply that submits `code` through the output tool."""
+    return ModelResponse(parts=[ToolCallPart(tool_name='submit_script', args={'code': code})])
+
+
+def fake_pilot_agent(model: FunctionModel) -> Agent[None, agent.PilotScript]:
+    return Agent(
+        model,
+        output_type=ToolOutput(agent.PilotScript, name='submit_script'),
+        capabilities=[ProcessHistory(agent.trim_history)],
+    )
 
 
 @pytest.fixture
@@ -170,23 +194,57 @@ async def test_agent_failure_falls_back_to_naive_policy(pool: AsyncMonty) -> Non
     await pilot.close()
 
 
-def test_extract_code() -> None:
-    reply = 'Here you go:\n```python\nx = 1\n```\nand a longer one\n```py\nx = 1\ny = 2\n```\n'
-    assert agent.extract_code(reply) == 'x = 1\ny = 2'
-    assert agent.extract_code('print(1)\n') == 'print(1)'
+async def test_reports_come_back_as_tool_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[ModelMessage]] = []
 
+    def pilot_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return submit(f'x = {len(seen)}')
 
-def test_flight_prompt_includes_last_run() -> None:
+    monkeypatch.setattr(agent, 'pilot_agent', fake_pilot_agent(FunctionModel(pilot_model)))
     memory = PilotMemory()
-    assert 'first flight' in agent.flight_prompt('land', memory)
+    assert await agent.write_pilot('land', memory) == 'x = 1'
     memory.record(RunReport(code='x = 1', outcome='Crashed after 3.0 s', error='Boom', output='hi'))
-    memory.record(RunReport(code='y = 2', outcome='Landed after 9.0 s'))
-    prompt = agent.flight_prompt('land', memory)
-    assert 'Goal: land' in prompt
-    assert '- flight 1: Crashed after 3.0 s' in prompt
-    assert 'Previous flight (flight 2): Landed after 9.0 s' in prompt
-    assert 'y = 2' in prompt
-    assert 'Boom' not in prompt
+    assert await agent.write_pilot('land', memory) == 'x = 2'
+    assert memory.pending is None
+
+    first, second = seen
+    assert len(first) == 1
+    assert 'Goal: land' in str(first[0])
+    assert len(second) == 3
+    assert second[0] == first[0]
+    call = second[1].parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert call.args_as_dict() == {'code': 'x = 1'}  # the previous script is the agent's own call
+    ret = second[2].parts[0]
+    assert isinstance(ret, ToolReturnPart)
+    assert ret.tool_call_id == call.tool_call_id
+    assert 'Crashed after 3.0 s' in str(ret.content)
+    assert 'Boom' in str(ret.content)
+
+
+async def test_history_is_trimmed_before_each_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[ModelMessage]] = []
+
+    def pilot_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return submit(f'x = {len(seen)}')
+
+    monkeypatch.setattr(agent, 'pilot_agent', fake_pilot_agent(FunctionModel(pilot_model)))
+    memory = PilotMemory()
+    for i in range(agent.MAX_HISTORY_TURNS + 3):
+        await agent.write_pilot('land', memory)
+        memory.record(RunReport(code=f'x = {i + 1}', outcome=f'Crashed on flight {i + 1}'))
+    last = seen[-1]
+    assert len(last) == 1 + 2 * agent.MAX_HISTORY_TURNS
+    assert isinstance(last[0], ModelRequest)
+    assert isinstance(last[0].parts[0], UserPromptPart)  # the goal survives trimming
+    assert isinstance(last[1], ModelResponse)  # then whole call/result pairs
+    assert isinstance(last[-1].parts[0], ToolReturnPart)
+    # Nine requests: the last one carries reports 1..8, of which only the last six survive.
+    assert 'Crashed on flight 2' not in str(last)
+    assert 'Crashed on flight 3' in str(last)
+    assert 'Crashed on flight 8' in str(last)
 
 
 def test_websocket_runs_agent_script(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -194,12 +252,12 @@ def test_websocket_runs_agent_script(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def pilot_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prompts.append(str(messages[-1]))
-        return ModelResponse(parts=[TextPart(f'```python\n{THRUST_EVERY_OTHER_TICK}\n```')])
+        return submit(THRUST_EVERY_OTHER_TICK)
 
     def helper_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('go straight up')])
 
-    monkeypatch.setattr(agent, 'pilot_agent', Agent(FunctionModel(pilot_model)))
+    monkeypatch.setattr(agent, 'pilot_agent', fake_pilot_agent(FunctionModel(pilot_model)))
     monkeypatch.setattr(agent, 'helper_agent', Agent(FunctionModel(helper_model)))
     monkeypatch.setenv('THRUST_PILOT', 'agent')
 

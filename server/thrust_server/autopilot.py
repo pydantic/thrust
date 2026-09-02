@@ -14,7 +14,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic_monty import (
     AsyncMonty,
@@ -30,6 +30,8 @@ from thrust_server import models
 from thrust_server.naive_policy import Policy
 
 if TYPE_CHECKING:
+    from pydantic_ai import AgentRunResult
+
     from thrust_server.models import State
 
 logger = logging.getLogger(__name__)
@@ -209,9 +211,16 @@ class RunReport:
 
 @dataclass
 class PilotMemory:
-    """Shared across connections so each flight can learn from the previous ones."""
+    """Shared across connections so each flight can learn from the previous ones.
 
+    `last_result` is the agent run that produced the current script; its messages are the
+    running conversation, in which every script is a `submit_script` tool call whose result
+    is the flight report. `pending` is the report the agent has not been told about yet.
+    """
+
+    last_result: AgentRunResult[Any] | None = None
     history: list[RunReport] = field(default_factory=list)
+    pending: RunReport | None = None
 
     @property
     def last_run(self) -> RunReport | None:
@@ -220,6 +229,7 @@ class PilotMemory:
     def record(self, report: RunReport) -> None:
         self.history.append(report)
         del self.history[:-HISTORY_SIZE]
+        self.pending = report
 
 
 class Flight:

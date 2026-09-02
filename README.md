@@ -57,6 +57,7 @@ hand-written controller for that flight. Environment variables:
 | `THRUST_PILOT_MODEL`  | `anthropic:claude-sonnet-5`            | Model that writes the script (pydantic-ai id) |
 | `THRUST_HELPER_MODEL` | `anthropic:claude-haiku-4-5-20251001`  | Cheap model behind the script's `ai()`        |
 | `THRUST_INSTRUCTIONS` | land on the pad as fast as possible    | The goal given to the script writer           |
+| `LOGFIRE_TOKEN`       | unset                                  | Send FastAPI and pydantic-ai traces to Logfire |
 
 ## Checks
 
@@ -107,12 +108,14 @@ The TypeScript types are in `src/protocol.ts` and the pydantic models in
 ## Autopilot
 
 `server/thrust_server/agent.py` holds a [pydantic-ai](https://ai.pydantic.dev) agent
-that writes a complete Python script for one flight. Its prompt describes the game,
-the exact physics and the sandbox API; the user prompt carries the goal plus, from the
-second flight on, the previous script, how that flight ended, any traceback it raised
-and the last lines it printed. Every new flight (a new connection, or a restart on the
-same connection) gets a freshly written script, so a session is a loop of fly, report,
-rewrite.
+that writes a complete Python script for one flight. Its instructions describe the
+game, the exact physics and the sandbox API. The agent holds one conversation for the
+life of the server process: the first message states the goal, each script is submitted
+through a `submit_script` tool call, and the flight's outcome (how it ended, any
+traceback, the last lines printed) goes back as that tool call's result. Every new
+flight (a new connection, or a restart on the same connection) gets a freshly written
+script, so a session is a loop of submit, fly, report, with the goal and the last six
+script/result pairs kept in the history.
 
 The script runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox
 (`server/thrust_server/autopilot.py`). It starts with the initial `status`, the
