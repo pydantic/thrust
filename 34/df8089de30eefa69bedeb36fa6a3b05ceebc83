@@ -1,0 +1,25 @@
+.pre-commit-config.yaml
+  s_b20fbaf61e249b::t_3440b85c86bf6b 1-33
+README.md
+  s_b20fbaf61e249b::t_3440b85c86bf6b 51-55,57-60
+Makefile
+  s_b20fbaf61e249b::t_3440b85c86bf6b 1-66
+CLAUDE.md
+  s_b20fbaf61e249b::t_3440b85c86bf6b 14-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "34df8089de30eefa69bedeb36fa6a3b05ceebc83",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
