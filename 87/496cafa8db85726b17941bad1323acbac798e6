@@ -1,0 +1,52 @@
+server/pyproject.toml
+  s_b20fbaf61e249b::t_d794589ea79fb1 8-9
+  s_b20fbaf61e249b::t_8de901aee4e44b 54
+server/tests/test_ws.py
+  s_b20fbaf61e249b::t_a8641fe373830f 1,5,23-27,29,34-35,37-38,40
+CLAUDE.md
+  s_b20fbaf61e249b::t_c5babadb7aee51 70-75
+  s_b20fbaf61e249b::t_4b4f0fd2d914be 8-14
+server/tests/conftest.py
+  s_b20fbaf61e249b::t_a8641fe373830f 1-9
+README.md
+  s_b20fbaf61e249b::t_4b4f0fd2d914be 7-8,50-60,107-133,135-136
+server/thrust_server/agent.py
+  s_b20fbaf61e249b::t_50f727757e5054 1,3-6
+  s_b20fbaf61e249b::t_b164cf96fd8f6a 2,7-18,21-30,32-66,75-109,111-161,163-166,168-178,180-181,184-185,187-188,191-192,194,196-199,201-202,204-224,235
+server/thrust_server/main.py
+  s_b20fbaf61e249b::t_45d1de31554816 2,4,8,10-11,17,21-22,24-26,30-35,37-39,41-44,46,50-56,59,62-63,70,72,75-77
+  s_b20fbaf61e249b::t_c612ba2cb11b0e 3,27
+  s_b20fbaf61e249b::t_d0b2e37012c2d7 28
+  s_b20fbaf61e249b::t_50f727757e5054 18
+server/thrust_server/models.py
+  s_b20fbaf61e249b::t_50f727757e5054 1
+server/thrust_server/autopilot.py
+  s_b20fbaf61e249b::t_e98064496fd8cb 341,478
+  s_b20fbaf61e249b::t_8c7f80e28a7c44 1-3,7-55,57-58,60-61,63-101,103-128,130,133-134,136-152,154-187,194-205,207-227,230-258,261-264,266-275,277-283,285-297,299-303,306-308,310-313,315-324,326-336,338-340,342-349,352,354,360,362-363,366-367,369-375,398-411,413-477,481-482,484-485,504-512,514-516
+  s_b20fbaf61e249b::t_3926b35408bbf0 383-392
+  s_b20fbaf61e249b::t_c612ba2cb11b0e 325
+  s_b20fbaf61e249b::t_20ec400a82c7ec 393,396
+  s_b20fbaf61e249b::t_50f727757e5054 4-6,56,59,62,102,132,135,153,228-229,298,309,314,412,488
+server/thrust_server/naive_policy.py
+  s_b20fbaf61e249b::t_50f727757e5054 3-4,21
+server/tests/test_autopilot.py
+  s_b20fbaf61e249b::t_a8641fe373830f 1-33,35-36,46-77,79-91,93-100,102-107,111-117,126-127,132-134,137-147,149-150,153-156,158-161,163-165,167-173,177-180,190-196,198-199,201,205,207-210,212-214,217
+  s_b20fbaf61e249b::t_41f99682892fe8 119-125,128-130
+  s_b20fbaf61e249b::t_20ec400a82c7ec 219-232,234-236,238,241-244,246-247,249-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "87496cafa8db85726b17941bad1323acbac798e6",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
