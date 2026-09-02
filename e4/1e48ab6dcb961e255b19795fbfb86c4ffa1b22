@@ -1,0 +1,61 @@
+server/thrust_server/telemetry.py
+  s_b20fbaf61e249b::t_659c6f26afecb5 66-69
+  s_b20fbaf61e249b::t_85240be3d3bb98 149-150
+  s_b20fbaf61e249b::t_11593757489437 1-12,15,18-65,70-148,151-172,174-180
+  s_b20fbaf61e249b::t_dad5d785097acc 13-14,16-17,173
+server/tests/test_telemetry.py
+  s_b20fbaf61e249b::t_cdef149af515d7 1-21,23-68
+  s_b20fbaf61e249b::t_dad5d785097acc 22
+src/render.ts
+  s_b20fbaf61e249b::t_f8c269844e061a 37-38,183-185,187-192
+  s_b20fbaf61e249b::t_9a843e71dca079 4
+  s_b20fbaf61e249b::t_a02ed0b108becd 51,57,126,196,200-202,206,210-211
+  s_b20fbaf61e249b::t_f5950bc65d0b5b 52-56,186,207-208
+  s_b20fbaf61e249b::t_c22239a9b25544 39-40,197-199,203-205,209,212-218,224-227
+  s_b20fbaf61e249b::t_00edc8be5bfd99 219-223
+src/main.ts
+  s_b20fbaf61e249b::t_a32627fd14ceed 83-87,135,230
+  s_b20fbaf61e249b::t_a02ed0b108becd 8,28,92-93,116,210-212,224
+  s_b20fbaf61e249b::t_9a843e71dca079 91,115,250
+  s_b20fbaf61e249b::t_c22239a9b25544 251
+CLAUDE.md
+  s_b20fbaf61e249b::t_451ca7acb13734 70,72-73
+  s_b20fbaf61e249b::t_85240be3d3bb98 80-82
+src/dialog.ts
+  s_b20fbaf61e249b::t_a32627fd14ceed 53-54,75,83
+index.html
+  s_b20fbaf61e249b::t_ab20d768022c77 131-134
+  s_b20fbaf61e249b::t_a32627fd14ceed 66-73,77-78,88-89,99-100,107
+  s_b20fbaf61e249b::t_bd657c17b2fa84 164
+src/times.ts
+  s_b20fbaf61e249b::t_f5950bc65d0b5b 13-14
+  s_b20fbaf61e249b::t_f8c269844e061a 1-6,9-10,15-46,49-50
+  s_b20fbaf61e249b::t_a02ed0b108becd 7-8,11-12,47-48
+server/thrust_server/agent.py
+  s_b20fbaf61e249b::t_11593757489437 92-94
+README.md
+  s_b20fbaf61e249b::t_c22239a9b25544 25
+  s_b20fbaf61e249b::t_ab4a0c9f4bba13 21,26
+  s_b20fbaf61e249b::t_85240be3d3bb98 153-158
+  s_b20fbaf61e249b::t_451ca7acb13734 16-17,36-39
+  s_b20fbaf61e249b::t_bd657c17b2fa84 35
+  s_b20fbaf61e249b::t_f5950bc65d0b5b 22-24
+server/thrust_server/autopilot.py
+  s_b20fbaf61e249b::t_11593757489437 33,224-227,232-238,334-335,338-345,399,413-415,496
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e41e48ab6dcb961e255b19795fbfb86c4ffa1b22",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
