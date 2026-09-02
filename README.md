@@ -4,7 +4,8 @@ A small rocket lander. The rocket starts resting on a launch pad and has to reac
 the green landing pad. Arrow keys fly the rocket, a random world is generated on
 every spawn, and random wind pushes the rocket around. With AI control enabled,
 every physics tick the game sends its state over a WebSocket to a FastAPI server,
-which replies with a move from the controller in `server/thrust_server/naive_policy.py`.
+which replies with a move. By default the server asks an LLM to write an autopilot
+script for each flight and runs it in a sandbox; see [Autopilot](#autopilot).
 
 ## Controls
 
@@ -45,6 +46,17 @@ uv run uvicorn thrust_server.main:app --reload --port 8000
 
 The server is only contacted when AI control is enabled. Set `VITE_WS_URL` to
 point the client at a different server.
+
+The default controller needs an API key for the model provider (for example
+`ANTHROPIC_API_KEY`). Without one the server logs an error and falls back to the
+hand-written controller for that flight. Environment variables:
+
+| Variable              | Default                                | Meaning                                       |
+| --------------------- | -------------------------------------- | --------------------------------------------- |
+| `THRUST_PILOT`        | `agent`                                | `agent` (LLM-written scripts) or `naive`      |
+| `THRUST_PILOT_MODEL`  | `anthropic:claude-sonnet-5`            | Model that writes the script (pydantic-ai id) |
+| `THRUST_HELPER_MODEL` | `anthropic:claude-haiku-4-5-20251001`  | Cheap model behind the script's `ai()`        |
+| `THRUST_INSTRUCTIONS` | land on the pad as fast as possible    | The goal given to the script writer           |
 
 ## Checks
 
@@ -92,9 +104,36 @@ Server to client:
 The TypeScript types are in `src/protocol.ts` and the pydantic models in
 `server/thrust_server/models.py`.
 
-## Controller
+## Autopilot
 
-`Policy` in `server/thrust_server/naive_policy.py` is a two-phase cascaded controller.
+`server/thrust_server/agent.py` holds a [pydantic-ai](https://ai.pydantic.dev) agent
+that writes a complete Python script for one flight. Its prompt describes the game,
+the exact physics and the sandbox API; the user prompt carries the goal plus, from the
+second flight on, the previous script, how that flight ended, any traceback it raised
+and the last lines it printed. Every new flight (a new connection, or a restart on the
+same connection) gets a freshly written script, so a session is a loop of fly, report,
+rewrite.
+
+The script runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox
+(`server/thrust_server/autopilot.py`). It starts with the initial `status`, the
+`terrain`, both pads, `world` and `physics` bound as globals and can call two host
+functions:
+
+```python
+async def update(move: Move) -> Status   # apply the move for one tick, get the next state
+async def ai(query: str) -> str          # ask the cheap helper model mid-flight
+```
+
+`update` hands the move to the game and waits for the next state message, so one
+call is exactly one physics tick and the script keeps running until the returned
+status is no longer `"flying"`. Before a script flies for real it is run for a few
+synthetic ticks; a script that raises or exits during that check is sent back to
+the writer with the error (up to three attempts), after which the naive controller
+takes the flight. A script that dies mid-flight leaves the rocket idle; the error
+lands in the next prompt.
+
+The hand-written fallback, `Policy` in `server/thrust_server/naive_policy.py`
+(`THRUST_PILOT=naive` to use it always), is a two-phase cascaded controller.
 In transit it climbs to a cruise altitude that clears every mountain between the
 rocket and the pad, then flies toward the pad centre, only moving sideways once
 the terrain ahead is clear. Near the pad it switches to descent and comes straight

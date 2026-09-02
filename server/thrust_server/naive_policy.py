@@ -1,7 +1,7 @@
 """The control policy: given the current game state, decide what the rocket does.
 
-The client sends one ``State`` per physics tick (60 Hz, paced so at most one
-request is in flight) and applies the returned ``Move`` until the next reply.
+The client sends one `State` per physics tick (60 Hz, paced so at most one
+request is in flight) and applies the returned `Move` until the next reply.
 
 The controller works in two phases:
 
@@ -18,7 +18,7 @@ exceeds half of what the engine can give. Tilt is limited near the ground so
 the rocket never touches down at an angle.
 
 Physics constants (thrust, drag, rocket size) come with every state message in
-``state.physics``; nothing here has to be kept in sync with the client.
+`state.physics`; nothing here has to be kept in sync with the client.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ DESCENT_ALIGN_DX = 2.0
 ANGULAR_DEADBAND = 0.12
 MAX_ANGULAR_VELOCITY = 2.4
 
-Phase = Literal["transit", "descent"]
+Phase = Literal['transit', 'descent']
 
 
 def resting_y(pad: Pad, physics: Physics) -> float:
@@ -61,11 +61,11 @@ class Policy:
     """One controller per connection; keeps the current phase between ticks."""
 
     def __init__(self) -> None:
-        self.phase: Phase = "transit"
+        self.phase: Phase = 'transit'
 
     def decide(self, state: State) -> Move:
-        if state.status != "flying":
-            self.phase = "transit"
+        if state.status != 'flying':
+            self.phase = 'transit'
             return Move()
 
         r = state.rocket
@@ -92,7 +92,7 @@ class Policy:
         # ---- attitude: point the nose along the required thrust, tilt limited near ground
         clearance = r.y - base_offset - terrain_height_at(state, r.x)
         max_tilt = clamp(0.06 + 0.1 * clearance, 0.06, MAX_TILT)
-        if self.phase == "descent":
+        if self.phase == 'descent':
             final = height_above_pad < FINAL_APPROACH_HEIGHT
             landing_tilt = MAX_TILT_LANDING if final else MAX_TILT_DESCENT
             max_tilt = min(max_tilt, landing_tilt)
@@ -121,14 +121,14 @@ class Policy:
         r = state.rocket
         pad_x = (state.pad.x1 + state.pad.x2) / 2
         # phase selection with hysteresis
-        if self.phase == "transit":
+        if self.phase == 'transit':
             if abs(dx) < DESCENT_ENTER_DX and abs(r.vx) < DESCENT_ENTER_VX and height_above_pad > 0:
-                self.phase = "descent"
+                self.phase = 'descent'
         elif abs(dx) > DESCENT_EXIT_DX:
-            self.phase = "transit"
+            self.phase = 'transit'
 
         # outer loops: desired velocities
-        if self.phase == "transit":
+        if self.phase == 'transit':
             cruise = self._cruise_altitude(state, pad_x)
             vy_des = clamp(0.5 * (cruise - r.y), -4.0, 5.0)
 

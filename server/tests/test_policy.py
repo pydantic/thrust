@@ -38,7 +38,7 @@ def make_state(
     vy: float = 0,
     angle: float = 0,
     angular_velocity: float = 0,
-    status: str = "flying",
+    status: str = 'flying',
 ) -> State:
     return State(
         tick=1,
@@ -62,7 +62,7 @@ def test_terrain_lookup() -> None:
 
 
 def test_terminal_state_is_noop() -> None:
-    assert Policy().decide(make_state(x=126, y=12, status="landed")) == Move()
+    assert Policy().decide(make_state(x=126, y=12, status='landed')) == Move()
 
 
 def test_takeoff_climbs_straight_up() -> None:
@@ -84,7 +84,7 @@ def test_descent_brakes_a_fast_fall() -> None:
     p = Policy()
     s = make_state(x=126, y=30, vy=-8)
     p.decide(s)
-    assert p.phase == "descent"
+    assert p.phase == 'descent'
     assert p.decide(s).thrust
 
 
@@ -92,7 +92,7 @@ def test_descent_lets_a_slow_fall_continue() -> None:
     p = Policy()
     s = make_state(x=126, y=13, vy=-1.0)
     p.decide(s)
-    assert p.phase == "descent"
+    assert p.phase == 'descent'
     assert not p.decide(s).thrust
 
 

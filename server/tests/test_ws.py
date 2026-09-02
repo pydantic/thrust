@@ -1,7 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from thrust_server.main import app
-from thrust_server.models import Move, Physics, State
+from thrust_server.models import Move, Pad, Physics, Rocket, State, Vec2, WorldInfo
 
 PHYSICS = Physics(
     dt=1 / 60,
@@ -19,34 +20,37 @@ PHYSICS = Physics(
 
 SAMPLE_STATE = State(
     tick=1,
-    status="flying",
-    rocket={"x": 80, "y": 90, "vx": 0, "vy": 0, "angle": 0, "angularVelocity": 0},  # pyright: ignore[reportArgumentType]
-    wind={"x": 2, "y": 0},  # pyright: ignore[reportArgumentType]
-    pad={"x1": 20, "x2": 32, "y": 15},  # pyright: ignore[reportArgumentType]
-    launchPad={"x1": 100, "x2": 110, "y": 20},  # pyright: ignore[reportArgumentType]
+    status='flying',
+    rocket=Rocket(x=80, y=90, vx=0, vy=0, angle=0, angularVelocity=0),
+    wind=Vec2(x=2, y=0),
+    pad=Pad(x1=20, x2=32, y=15),
+    launchPad=Pad(x1=100, x2=110, y=20),
     terrain=[(0, 10), (20, 15), (32, 15), (160, 20)],
-    world={"width": 160, "height": 100, "gravity": 4},  # pyright: ignore[reportArgumentType]
+    world=WorldInfo(width=160, height=100, gravity=4),
     physics=PHYSICS,
 )
 
 
+@pytest.fixture(autouse=True)
+def naive_pilot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THRUST_PILOT', 'naive')
+
+
 def test_health() -> None:
-    client = TestClient(app)
-    assert client.get("/health").json() == {"ok": True}
+    with TestClient(app) as client:
+        assert client.get('/health').json() == {'ok': True}
 
 
 def test_ws_returns_move() -> None:
-    client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
+    with TestClient(app) as client, client.websocket_connect('/ws') as ws:
         ws.send_text(SAMPLE_STATE.model_dump_json())
         move = Move.model_validate_json(ws.receive_text())
-    assert move.type == "move"
+    assert move.type == 'move'
 
 
 def test_ws_ignores_invalid_message() -> None:
-    client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        ws.send_text("{}")
+    with TestClient(app) as client, client.websocket_connect('/ws') as ws:
+        ws.send_text('{}')
         ws.send_text(SAMPLE_STATE.model_dump_json())
         move = Move.model_validate_json(ws.receive_text())
-    assert move.type == "move"
+    assert move.type == 'move'

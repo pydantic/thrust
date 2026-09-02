@@ -5,6 +5,8 @@ description = "WebSocket autopilot server for the Thrust lander game."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
+    "pydantic-ai>=2.37.0",
+    "pydantic-monty>=0.0.21",
     "uvicorn[standard]>=0.30",
 ]
 
@@ -25,7 +27,7 @@ packages = ["thrust_server"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -34,14 +36,27 @@ ignore = [
     "COM812", # conflicts with the formatter
     "ISC001", # conflicts with the formatter
     "CPY001", # no copyright headers
+    "Q000",   # use flake8-quotes to control quote style
+    "Q003",   # use flake8-quotes to control quote style
+    "TC003"
 ]
+flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
+mccabe = { max-complexity = 14 }
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "INP001", "PLR2004", "PLR0913"]
+"tests/*" = ["S101", "INP001", "PLR2004", "PLR0913", "ARG001"]
 
 [tool.basedpyright]
+pythonVersion = "3.14"
 typeCheckingMode = "strict"
-pythonVersion = "3.12"
+reportUnnecessaryTypeIgnoreComment = true
 include = ["thrust_server", "tests"]
 venvPath = "."
 venv = ".venv"

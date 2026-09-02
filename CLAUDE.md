@@ -5,9 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A canvas rocket-lander game (TypeScript + Vite, no runtime deps) that streams its state each physics
-tick over a WebSocket to a FastAPI server, which replies with a move. The controller is `Policy` in
-`server/thrust_server/naive_policy.py` (one instance per connection; it keeps a transit/descent phase). The
-game is fully playable without the server.
+tick over a WebSocket to a FastAPI server, which replies with a move. By default the server has a
+pydantic-ai agent (`server/thrust_server/agent.py`) write a Python autopilot script per flight and
+runs it in a pydantic-monty sandbox (`server/thrust_server/autopilot.py`); the script calls
+`await update(move)` once per tick and `await ai(query)` for a cheap helper model. `THRUST_PILOT=naive`
+selects the hand-written `Policy` in `server/thrust_server/naive_policy.py` instead (one instance per
+connection; it keeps a transit/descent phase), which is also the fallback when the agent cannot
+produce a working script. The game is fully playable without the server.
 
 ## Commands
 
@@ -63,7 +67,12 @@ discarded. Inputs merge per axis in `src/main.ts`: thrust is keys OR server move
 rotation key replaces the server's rotation so the player can overrule the AI. The
 client only exists while "Enable AI control" is ticked in the start dialog (`src/dialog.ts`, an HTML
 overlay in `index.html`); unticking it closes the socket. The game loop pauses while the dialog is
-open, and a landed/crashed outcome reopens it after a short delay.
+open, and a landed/crashed outcome reopens it after a short delay. The socket survives restarts, so
+the server side (`AgentPilot.decide`) treats a tick reset, or a flying state after a terminal one, as
+a new flight: it closes the running script, records a `RunReport` in the process-wide `PilotMemory`
+and asks the agent for a new script. Scripts pass a pre-flight check (a few synthetic ticks) before
+they fly; the tests drive the real monty runtime with fake code writers and `FunctionModel`, and
+`tests/conftest.py` blocks real model requests.
 
 **Physics (`src/physics.ts`)** is a hand-rolled rigid body at a fixed 60 Hz (`DT`), not Box2D.
 Wind is linear drag toward the local wind velocity. Ground contact tests the three triangle
