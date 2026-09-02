@@ -22,9 +22,17 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_monty import AsyncMonty
+from starlette.websockets import WebSocketDisconnect
 
 from thrust_server import agent
-from thrust_server.autopilot import PilotMemory, PilotScript, RunReport, ScriptPilot, make_plan
+from thrust_server.autopilot import (
+    FlightResult,
+    PilotMemory,
+    PilotScript,
+    RunReport,
+    fly_script,
+    make_plan,
+)
 from thrust_server.main import app
 from thrust_server.models import Abort, Move, Physics, State
 
@@ -116,10 +124,27 @@ def scripted_pilot(monkeypatch: pytest.MonkeyPatch, *scripts: str) -> list[list[
     return seen
 
 
-async def decide_move(pilot: ScriptPilot, state: State) -> Move:
-    reply = await pilot.decide(state)
-    assert isinstance(reply, Move), reply
-    return reply
+async def fly(
+    pool: AsyncMonty, plan: AgentRunResult[PilotScript], states: list[State]
+) -> tuple[FlightResult, list[Move | Abort]]:
+    """Fly the plan through `states`; once they run out the game "hangs up"."""
+    remaining = iter(states[1:])
+    replies: list[Move | Abort] = []
+
+    async def next_state() -> State:
+        try:
+            return next(remaining)
+        except StopIteration:
+            msg = 'client hung up'
+            raise ConnectionError(msg) from None
+
+    async def send_reply(reply: Move | Abort) -> None:
+        replies.append(reply)
+
+    result = await fly_script(
+        pool, plan, fake_ai, first_state=states[0], next_state=next_state, send_reply=send_reply
+    )
+    return result, replies
 
 
 @pytest.fixture
@@ -137,24 +162,21 @@ async def plan(pool: AsyncMonty, memory: PilotMemory) -> AgentRunResult[PilotScr
 async def test_script_controls_each_tick(pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch) -> None:
     scripted_pilot(monkeypatch, THRUST_EVERY_OTHER_TICK)
     memory = PilotMemory()
-    pilot = ScriptPilot(pool, memory, await plan(pool, memory), fake_ai)
-    moves = [await decide_move(pilot, make_state(tick)) for tick in range(4)]
-    assert [m.thrust for m in moves] == [True, False, True, False]
+    states = [make_state(tick) for tick in range(4)] + [make_state(4, 'landed')]
+    result, replies = await fly(pool, await plan(pool, memory), states)
+    moves = [r for r in replies if isinstance(r, Move)]
+    assert len(moves) == len(replies) == 5  # one move per state; the landing gets an idle one
+    assert [m.thrust for m in moves] == [True, False, True, False, False]
     assert moves[0].right is True
     assert moves[1].right is False
 
-    landed = await decide_move(pilot, make_state(4, 'landed'))
-    assert landed == Move()  # the script sees the landing and exits
-    assert (await decide_move(pilot, make_state(5, 'landed'))) == Move()  # flight over: idle
-    await pilot.close()
-
-    report = memory.last_run
-    assert report is not None
-    assert report.error is None
-    assert report.outcome.startswith('Landed after 0.1 s (tick 4)')
+    assert result.error is None
+    assert result.ticks == 4
+    assert not result.exited_early
+    report = result.report('code')
+    assert report.outcome == 'Landed after 0.1 s (tick 4).'
     assert 'plan: climb, then cross' in report.output
     assert 'finished landed 0.07 s' in report.output
-    assert len(memory.history) == 1  # close() after the landing does not record twice
 
 
 async def test_script_error_aborts_the_flight(
@@ -169,32 +191,62 @@ async def test_script_error_aborts_the_flight(
         '        boom = 1 / 0\n',
     )
     memory = PilotMemory()
-    pilot = ScriptPilot(pool, memory, await plan(pool, memory), fake_ai)
-    for tick in range(5):
-        assert (await decide_move(pilot, make_state(tick))).thrust is True
-    reply = await pilot.decide(make_state(5))  # the script dies: the flight is aborted now
-    assert isinstance(reply, Abort)
-    assert reply.reason == 'ZeroDivisionError: division by zero'
-    report = memory.last_run
-    assert report is not None
-    assert report.error is not None
-    assert 'ZeroDivisionError' in report.error
-    assert report.outcome.startswith('The flight was cut short')
-    assert 'stopped controlling the rocket after 5 ticks' in report.outcome
-    assert (await decide_move(pilot, make_state(6, 'aborted'))) == Move()  # over: idle
-    assert len(memory.history) == 1
+    states = [make_state(tick) for tick in range(8)]
+    result, replies = await fly(pool, await plan(pool, memory), states)
+    assert [type(r).__name__ for r in replies] == ['Move'] * 5 + ['Abort']
+    abort = replies[-1]
+    assert isinstance(abort, Abort)
+    assert abort.reason == 'ZeroDivisionError: division by zero'
+    assert result.error is not None
+    assert 'ZeroDivisionError' in result.error
+    outcome = result.report('code').outcome
+    assert outcome.startswith('The flight was cut short after 0.1 s (tick 5)')
+    assert 'stopped controlling the rocket after 5 ticks' in outcome
 
 
-async def test_disconnect_mid_flight_records_a_cut_short_report(
+async def test_script_that_exits_early_aborts_the_flight(
+    pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripted_pilot(monkeypatch, 's = await update(Move(thrust=True))\nprint("bye")\n')
+    memory = PilotMemory()
+    result, replies = await fly(pool, await plan(pool, memory), [make_state(0), make_state(1)])
+    assert [type(r).__name__ for r in replies] == ['Move', 'Abort']
+    assert isinstance(replies[1], Abort)
+    assert replies[1].reason == 'the script exited while still flying'
+    assert result.exited_early
+    assert 'The script exited after 1 ticks.' in result.report('code').outcome
+
+
+async def test_game_going_away_ends_the_script_quietly(
     pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scripted_pilot(monkeypatch, THRUST_EVERY_OTHER_TICK)
     memory = PilotMemory()
-    pilot = ScriptPilot(pool, memory, await plan(pool, memory), fake_ai)
-    await pilot.decide(make_state(0))
-    await pilot.close()
-    assert memory.last_run is not None
-    assert memory.last_run.outcome.startswith('The flight was cut short')
+    result, replies = await fly(pool, await plan(pool, memory), [make_state(0), make_state(1)])
+    assert len(replies) == 2  # the reply to state 1 went out, then the client hung up
+    assert result.error is None  # the FlightOver unwinding is not the script's fault
+    assert result.ticks == 1
+    assert result.report('code').outcome.startswith('The flight was cut short after 0.0 s (tick 1)')
+
+
+async def test_script_ignoring_flight_over_is_cancelled(
+    pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripted_pilot(
+        monkeypatch,
+        'while True:\n'
+        '    try:\n'
+        '        await update(Move(thrust=True))\n'
+        '    except Exception:\n'
+        '        pass\n',
+    )
+    memory = PilotMemory()
+    result, replies = await fly(
+        pool, await plan(pool, memory), [make_state(0), make_state(1, 'landed')]
+    )
+    assert replies == [Move(thrust=True), Move()]  # the stray update() calls sent nothing more
+    assert result.error is None
+    assert result.last_state.status == 'landed'
 
 
 async def test_make_plan_retries_after_preflight_failure(
@@ -308,7 +360,6 @@ def test_plan_then_websocket_flight(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         return ModelResponse(parts=[TextPart('go straight up')])
 
     monkeypatch.setattr(agent, 'helper_agent', Agent(FunctionModel(helper_model)))
-    monkeypatch.setenv('THRUST_PILOT', 'agent')
 
     with TestClient(app) as client:
         response = client.get('/plan')
@@ -317,6 +368,7 @@ def test_plan_then_websocket_flight(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         assert len(seen) == 1
 
         with client.websocket_connect('/ws') as ws:
+            ws.send_text('{}')  # invalid states are ignored
             moves: list[Move] = []
             for tick in range(3):
                 ws.send_text(make_state(tick).model_dump_json())
@@ -331,10 +383,9 @@ def test_plan_then_websocket_flight(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         assert memory.last_state is not None  # the next plan is pre-checked against it
         assert app.state.plan is None  # consumed by the flight
 
-        # A connection without a fresh plan gets the naive policy.
-        with client.websocket_connect('/ws') as ws:
-            ws.send_text(make_state(0).model_dump_json())
-            assert Move.model_validate_json(ws.receive_text()).thrust is True
+        # The plan flew once; another connection needs a new one.
+        with client.websocket_connect('/ws') as ws, pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
         assert len(seen) == 1
 
     saved = PilotMemory.model_validate_json((tmp_path / 'memory.json').read_text())

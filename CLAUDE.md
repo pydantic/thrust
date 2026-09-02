@@ -9,10 +9,7 @@ tick over a WebSocket to a FastAPI server, which replies with a move. By default
 calls `GET /plan`, where a pydantic-ai agent (`server/thrust_server/agent.py`) writes and pre-checks a
 Python autopilot script, then connects `/ws` for exactly one flight, which runs the script in a
 pydantic-monty sandbox (`server/thrust_server/autopilot.py`); the script calls `await update(move)`
-once per tick and `await ai(query)` for a cheap helper model. The client hangs up after each flight. `THRUST_PILOT=naive`
-selects the hand-written `Policy` in `server/thrust_server/naive_policy.py` instead (one instance per
-connection; it keeps a transit/descent phase), which is also the fallback when the agent cannot
-produce a working script. The game is fully playable without the server.
+once per tick and `await ai(query)` for a cheap helper model. The client hangs up after each flight. A websocket without a plan is closed with code 1008. The game is fully playable without the server.
 
 ## Commands
 
@@ -76,17 +73,21 @@ Auto-replay is never persisted; auto-pilot is. The game loop pauses while the di
 open, and a landed/crashed/timeout/aborted outcome reopens it after a short delay, or respawns the same seed
 when auto-replay is ticked. The 90 s flight cap (`PHYSICS.maxFlightTime`) is enforced in `src/main.ts`
 where game time is counted, not in `step`. The socket survives restarts, so
-the server side flies one flight per connection (`ScriptPilot`): the first state starts the planned
-script and a terminal state, or the disconnect, records a `RunReport` in the process-wide
-`PilotMemory`; a script exception ends the flight at once with an `{type: "abort"}` reply, which the
-client turns into status `aborted`. Logfire (`logfire.configure` in `main.py`, console output without a
-token) carries the structure: a `flight` span per connection, inside it a `pilot script` span around
-the whole sandbox run (code and strategy as attributes, every printed line as a nested log, return
-value or error and ticks controlled set when it ends), then a `flight over` log with the report. `make_plan` (behind `GET /plan`) asks the agent for the next script and stores the run
+the server side flies one flight per connection: `fly_script(pool, plan, ask_ai, first_state=,
+next_state=, send_reply=)` in `autopilot.py` runs the planned script in the sandbox, where the script's
+`update(move)` is simply "send the move, await the next state" (`GameLink`); it returns a `FlightResult`
+whose `report()` the websocket handler records in the process-wide `PilotMemory`. Every state gets exactly
+one reply: the script answers all but the last, and `fly_script` answers a terminal state with an idle
+move or a dead script's state with `{type: "abort"}`, which the client turns into status `aborted`.
+Logfire (`logfire.configure` in `main.py`,
+console output without a token) carries the structure: a `flight` span per connection, inside it a
+`pilot script` span around the whole sandbox run (code and strategy as attributes, every printed line as
+a nested log via context propagation, return value or error and ticks set when it ends), then a
+`flight over` log with the report. `make_plan` (behind `GET /plan`) asks the agent for the next script and stores the run
 result in `app.state.plan` for the next connection; `memory.last_state` is what pre-flight checks use. The agent's output is a `start_flight` tool call; `PilotMemory`
 (a pydantic model persisted to `THRUST_MEMORY_FILE`, default `server/pilot_memory.json`, on every
-report) keeps the message history; `write_pilot` returns the `AgentRunResult`, which travels with the
-`Flight`, and `record(report, result)` stores `all_messages(output_tool_return_content=report.feedback())`
+report) keeps the message history; `write_pilot` returns the `AgentRunResult`, which is the plan handed to the
+flight, and `record(report, result)` stores `all_messages(output_tool_return_content=report.feedback())`
 so the report becomes that call's result. The next run continues the conversation with no new user
 prompt, a restart resumes it, and a flight cut short by a restart is simply absent from it. The goal
 lives in the agent's instructions; there is no per-run instructions parameter. A `ProcessHistory`

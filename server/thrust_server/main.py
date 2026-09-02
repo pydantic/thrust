@@ -16,24 +16,20 @@ from pydantic_monty import AsyncMonty
 from thrust_server import agent
 from thrust_server.autopilot import (
     MAX_ATTEMPTS,
-    NaivePilot,
-    Pilot,
     PilotMemory,
     PilotScript,
-    ScriptPilot,
+    fly_script,
     make_plan,
 )
-from thrust_server.models import Plan, State
+from thrust_server.models import Abort, Move, Plan, State
 
 if TYPE_CHECKING:
     from pydantic_ai import AgentRunResult
 
 logger = logging.getLogger(__name__)
 
-
-def pilot_mode() -> str:
-    """`agent` (default) runs LLM-written scripts, `naive` the hand-written controller."""
-    return os.environ.get('THRUST_PILOT', 'agent')
+NO_PLAN_CLOSE_CODE = 1008
+"""WebSocket close code (policy violation) for a connection made without `GET /plan` first."""
 
 
 def memory_file() -> Path:
@@ -72,9 +68,6 @@ async def health() -> dict[str, bool]:
 async def plan(request: Request) -> Plan:
     """Have the agent write (and pre-check) the script for the next flight."""
     state = request.app.state
-    if pilot_mode() == 'naive':
-        state.plan = None
-        return Plan(strategy='The hand-written controller flies this one.')
     pool: AsyncMonty = state.monty
     memory: PilotMemory = state.memory
     try:
@@ -89,41 +82,56 @@ async def plan(request: Request) -> Plan:
     return Plan(strategy=result.output.strategy)
 
 
-def take_pilot(websocket: WebSocket) -> Pilot:
-    """The controller for this connection: the planned script if there is one, else naive."""
+def take_plan(websocket: WebSocket) -> AgentRunResult[PilotScript] | None:
+    """The script planned for this connection, if any; each plan flies once."""
     state = websocket.app.state
     planned: AgentRunResult[PilotScript] | None = state.plan
     state.plan = None
-    if planned is None or pilot_mode() == 'naive':
-        logger.info('no plan for this connection, flying the naive policy')
-        return NaivePilot()
-    pool: AsyncMonty = state.monty
-    memory: PilotMemory = state.memory
-    return ScriptPilot(pool, memory, planned, agent.ask_helper)
+    return planned
 
 
 @app.websocket('/ws')
 async def ws(websocket: WebSocket) -> None:
     """One flight per connection: the client connects after `GET /plan` and hangs up after."""
     await websocket.accept()
-    pilot = take_pilot(websocket)
-    memory: PilotMemory = websocket.app.state.memory
-    first = True
-    with logfire.span('flight', pilot=type(pilot).__name__):
-        try:
+    state = websocket.app.state
+    pool: AsyncMonty = state.monty
+    memory: PilotMemory = state.memory
+
+    async def next_state() -> State:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                return State.model_validate_json(raw)
+            except ValidationError:
+                logger.warning('invalid state message', exc_info=True)
+
+    async def send_reply(reply: Move | Abort) -> None:
+        await websocket.send_text(reply.model_dump_json())
+
+    plan = take_plan(websocket)
+    if plan is None:
+        logger.warning('websocket without a plan, closing')
+        await websocket.close(code=NO_PLAN_CLOSE_CODE, reason='no plan: call GET /plan first')
+        return
+    try:
+        first = await next_state()
+        memory.last_state = first
+        with logfire.span('flight'):
+            result = await fly_script(
+                pool,
+                plan,
+                agent.ask_helper,
+                first_state=first,
+                next_state=next_state,
+                send_reply=send_reply,
+            )
+            report = result.report(plan.output.code)
+            memory.record(report, plan)
+            logfire.info('flight over: {outcome}', outcome=report.outcome, error=report.error)
+            # The client keeps sending the final state for a moment before hanging up.
             while True:
-                raw = await websocket.receive_text()
-                try:
-                    state = State.model_validate_json(raw)
-                except ValidationError:
-                    logger.warning('invalid state message', exc_info=True)
-                    continue
-                if first:
-                    first = False
-                    memory.last_state = state
-                reply = await pilot.decide(state)
-                await websocket.send_text(reply.model_dump_json())
-        except WebSocketDisconnect:
-            logger.info('client disconnected')
-        finally:
-            await pilot.close()
+                await next_state()
+                await send_reply(Move())
+    except WebSocketDisconnect:
+        logger.info('client disconnected')

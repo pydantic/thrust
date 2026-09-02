@@ -85,9 +85,10 @@ These names are predefined. Do not define, import or shadow them:
   thousands of ticks, so keep the per-tick work small and
   never sleep or busy-wait.
 - The simulation does not pause while the script thinks. If more than about half a second
-  passes between two `update` calls the rocket flies on with no input, and if the script
-  takes more than 15 s it is abandoned. So call `ai()` only where a pause is harmless: on
-  the launch pad before the first `update`, or while hovering high above any terrain.
+  passes between two `update` calls the rocket flies on with no input. The whole flight
+  has a budget of 30 s of sandbox compute (waiting inside `update` or `ai` is free), after
+  which the script is killed. So call `ai()` only where a pause is harmless: on the launch
+  pad before the first `update`, or while hovering high above any terrain.
 - `print()` output is collected and shown to you after the flight. Print a compact status
   line about once a second (every 60 ticks) and at phase changes; it is your only telemetry.
 - An uncaught exception ends the script; the rocket then drifts uncontrolled. Guard

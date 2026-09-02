@@ -3,9 +3,8 @@
 The script is plain Python executed by monty. It sees the world through a handful of
 predefined names (the dataclasses below plus `update`/`ai`) and steers the rocket by
 awaiting `update(move)` once per physics tick; the move is sent to the game and the call
-returns once the next state arrives. One `Flight` wraps one script run; `make_plan` asks
-the agent for the next script (behind `GET /plan`) and `ScriptPilot` flies it for one
-websocket connection.
+returns once the next state arrives. `make_plan` asks the agent for the next script
+(behind `GET /plan`) and `fly_script` flies it for one websocket connection.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 import logfire
 from logfire.propagate import attach_context, get_context
@@ -32,7 +30,6 @@ from pydantic_monty import (
 
 from thrust_server import models
 from thrust_server.models import State
-from thrust_server.naive_policy import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +129,10 @@ SANDBOX_TYPES: list[type] = [Move, Status, Pad, World, Physics]
 
 FLYING = 'flying'
 
-LIMITS: ResourceLimits = {'max_duration_secs': 120, 'max_memory': 256 * 1024 * 1024}
-"""Compute limits per flight. Time spent waiting for the game inside `update` does not count."""
-
-MOVE_TIMEOUT_S = 15.0
-"""How long the script may take between two `update` calls before it is abandoned."""
+LIMITS: ResourceLimits = {'max_duration_secs': 30, 'max_memory': 256 * 1024 * 1024}
+"""Sandbox limits per flight. `max_duration_secs` is compute only: time spent waiting for
+the game inside `update` or for the helper model inside `ai` does not count, so it also
+catches a script that stalls."""
 
 OUTPUT_TAIL_LINES = 40
 HISTORY_SIZE = 10
@@ -144,13 +140,20 @@ HISTORY_SIZE = 10
 PREFLIGHT_TICKS = 3
 """Synthetic ticks a new script is run for before it gets the real flight."""
 MAX_ATTEMPTS = 3
-"""Scripts requested per flight before giving up and using the naive policy."""
+"""Scripts requested per plan before giving up."""
 PREFLIGHT_OUTCOME = (
     'Did not fly: the script failed the pre-flight check, which runs it for a few ticks'
     ' against the starting state before the real flight.'
 )
+STRAY_CALLS_LIMIT = 3
+"""`update` calls tolerated after the flight is over before the script is cancelled."""
 
 AskAI = Callable[[str], Awaitable[str]]
+NextState = Callable[[], Awaitable[State]]
+"""The next state from the game; raising means the game has gone away."""
+SendReply = Callable[[models.Move | models.Abort], Awaitable[None]]
+
+FLIGHT_OVER_MESSAGE = 'the flight is over, stop calling update()'
 
 
 class FlightOver(Exception):  # noqa: N818 - the message says what happened
@@ -275,151 +278,81 @@ class PilotMemory(BaseModel):
         self.save()
 
 
-class Flight:
-    """One script steering one flight.
+class PrintCollector:
+    """Keeps what the script prints and logs each line inside the `pilot script` span.
 
-    The game side calls `push_state` then `next_move`; the script side, inside the
-    sandbox, calls `update` which hands a move to the game and waits for the next state.
+    Monty calls the print callback outside the span's task context, hence the explicit
+    context propagation.
     """
 
-    def __init__(
-        self,
-        pool: AsyncMonty,
-        result: AgentRunResult[PilotScript],
-        first_state: State,
-        ask_ai: AskAI,
-    ) -> None:
-        self._pool = pool
-        self.result = result
-        """The agent run that wrote the script; the flight report becomes its tool result."""
-        self.code = result.output.code
-        self._ask_ai = ask_ai
-        self._states: asyncio.Queue[State | None] = asyncio.Queue()
-        self._moves: asyncio.Queue[Move | None] = asyncio.Queue()
-        self._output: list[str] = []
-        self._pending_line = ''
-        self._log_context: Mapping[str, str] | None = None
-        """The `pilot script` span's context: monty calls the print callback outside it."""
-        self._closed = False
-        self._task: asyncio.Future[None] | None = None
-        self.first_state = first_state
-        self.last_state = first_state
-        self.error: str | None = None
-        self.ticks_controlled = 0
+    def __init__(self) -> None:
+        self.text = ''
+        self._pending = ''
+        self.context: Mapping[str, str] = {}
 
-    def start(self) -> None:
-        self._task = asyncio.ensure_future(self._run())
-
-    @property
-    def done(self) -> bool:
-        return self._task is not None and self._task.done()
-
-    @property
-    def output(self) -> str:
-        return ''.join(self._output) + self._pending_line
-
-    def _on_print(self, stream: str, text: str) -> None:
-        """Collect the script's print() output and log each complete line."""
-        self._pending_line += text
-        *lines, self._pending_line = self._pending_line.split('\n')
-        with attach_context(self._log_context or {}):
+    def on_print(self, stream: str, chunk: str) -> None:
+        self._pending += chunk
+        *lines, self._pending = self._pending.split('\n')
+        with attach_context(self.context):
             for line in lines:
-                self._output.append(line + '\n')
-                logfire.info('script: {line}', line=line, stream=stream, tick=self.last_state.tick)
+                self.text += line + '\n'
+                logfire.info('script: {line}', line=line, stream=stream)
 
-    async def _run(self) -> None:
-        externals: dict[str, object] = {
-            'update': self._update,
-            'ai': self._ask_ai,
-            **{cls.__name__: cls for cls in SANDBOX_TYPES},
-        }
-        # One span for the whole script run; its prints and outcome nest inside it.
-        with logfire.span(
-            'pilot script',
-            code=self.code,
-            lines=self.code.count('\n') + 1,
-            strategy=self.result.output.strategy,
-        ) as span:
-            self._log_context = get_context()
-            try:
-                async with self._pool.checkout(
-                    script_name='pilot.py', limits=LIMITS, dataclass_registry=SANDBOX_TYPES
-                ) as session:
-                    returned = await session.feed_run(
-                        self.code,
-                        inputs=script_inputs(self.first_state),
-                        external_lookup=externals,
-                        print_callback=self._on_print,
-                    )
-                span.set_attribute('returned', returned)
-            except MontyError as exc:
-                if not self._closed:
-                    self.error = display_error(exc)
-                    span.set_attribute('error', self.error)
-                    span.record_exception(exc)
-            finally:
-                span.set_attribute('ticks_controlled', self.ticks_controlled)
-                span.set_attribute('status', self.last_state.status)
-                self._moves.put_nowait(None)
+    def tail(self) -> str:
+        text = self.text + self._pending
+        parts = text.splitlines()
+        if len(parts) <= OUTPUT_TAIL_LINES:
+            return text
+        omitted = len(parts) - OUTPUT_TAIL_LINES
+        return '\n'.join([f'... ({omitted} earlier lines omitted)', *parts[-OUTPUT_TAIL_LINES:]])
 
-    async def _update(self, move: object) -> Status:
-        if self._closed:
-            raise FlightOver(FLIGHT_OVER_MESSAGE)
-        if not isinstance(move, Move):
-            msg = f'update() expects a Move, got {type(move).__name__}'
-            raise TypeError(msg)
-        await self._moves.put(move)
-        state = await self._states.get()
-        if state is None:
-            raise FlightOver(FLIGHT_OVER_MESSAGE)
-        self.ticks_controlled += 1
-        return status_from_state(state)
 
-    def push_state(self, state: State) -> None:
-        self.last_state = state
-        self._states.put_nowait(state)
+@dataclass
+class FlightResult:
+    """How a script run went."""
 
-    async def next_move(self) -> Move | None:
-        """The script's next move, or `None` once the script has finished or given up."""
-        if self.done:
-            return None
-        try:
-            move = await asyncio.wait_for(self._moves.get(), MOVE_TIMEOUT_S)
-        except TimeoutError:
-            self.error = f'the script took more than {MOVE_TIMEOUT_S:.0f} s to call update()'
-            logfire.error('pilot script abandoned', error=self.error)
-            await self.close()
-            return None
-        if move is None:
-            # Keep `done` true for later callers: the sentinel is only queued once.
-            self._moves.put_nowait(None)
-        return move
+    last_state: State
+    ticks: int
+    """`update` calls that were answered with a state."""
+    error: str | None
+    """Traceback if the script raised (a `FlightOver` unwinding does not count)."""
+    output: str
+    exited_early: bool
+    """The script returned while the rocket was still flying and the game still there."""
 
-    async def close(self) -> None:
-        """Stop the script: unblock `update` with an error, then cancel if it lingers."""
-        if self._closed:
-            return
-        self._closed = True
-        self._states.put_nowait(None)
-        if self._task is None:
-            return
-        try:
-            await asyncio.wait_for(asyncio.shield(self._task), 2.0)
-        except TimeoutError:
-            self._task.cancel()
-        except Exception:  # noqa: BLE001, S110 - _run already recorded and logged it
-            pass
+    def report(self, code: str) -> RunReport:
+        return RunReport(code=code, outcome=self.describe(), error=self.error, output=self.output)
 
-    def report(self) -> RunReport:
-        return RunReport(
-            code=self.code,
-            outcome=describe_outcome(self),
-            error=self.error,
-            output=tail(self.output, OUTPUT_TAIL_LINES),
+    def describe(self) -> str:
+        state = self.last_state
+        rocket = state.rocket
+        where = (
+            f'x={rocket.x:.1f} y={rocket.y:.1f} vx={rocket.vx:.2f} vy={rocket.vy:.2f} '
+            f'angle={rocket.angle:.2f} rad'
         )
-
-
-FLIGHT_OVER_MESSAGE = 'the flight is over, stop calling update()'
+        when = f'after {state.tick * state.physics.dt:.1f} s (tick {state.tick})'
+        pad = state.pad
+        target = f'the landing pad spans x {pad.x1:.1f}..{pad.x2:.1f} at y {pad.y:.1f}'
+        if state.status == 'landed':
+            summary = f'Landed {when}.'
+        elif state.status == 'crashed':
+            summary = f'Crashed {when} at {where}; {target}.'
+        elif state.status == 'timeout':
+            limit = state.physics.max_flight_time
+            summary = (
+                f'Ran out of time: flights are cut off at {limit:.0f} s,'
+                f' still at {where}; {target}.'
+            )
+        else:
+            summary = f'The flight was cut short {when} while still flying at {where}; {target}.'
+        if self.error is not None:
+            summary += (
+                f' The script stopped controlling the rocket after {self.ticks} ticks'
+                ' because it raised an error (below).'
+            )
+        elif self.exited_early:
+            summary += f' The script exited after {self.ticks} ticks.'
+        return summary
 
 
 def display_error(exc: MontyError) -> str:
@@ -428,64 +361,141 @@ def display_error(exc: MontyError) -> str:
     return str(exc)
 
 
-def describe_outcome(flight: Flight) -> str:
-    state = flight.last_state
-    rocket = state.rocket
-    where = (
-        f'x={rocket.x:.1f} y={rocket.y:.1f} vx={rocket.vx:.2f} vy={rocket.vy:.2f} '
-        f'angle={rocket.angle:.2f} rad'
+class GameLink:
+    """What the sandbox's `update` talks to: send a move, wait for the next state.
+
+    `over` is set once the state is terminal or the game has gone (`next_state` raised);
+    after that `update` raises so the script unwinds, and a script that keeps calling it
+    anyway is cancelled.
+    """
+
+    def __init__(self, first_state: State, next_state: NextState, send_reply: SendReply) -> None:
+        self.state = first_state
+        self.ticks = 0
+        self.over = False
+        self.game_gone = False
+        self.stray_calls = 0
+        self.run: asyncio.Future[object] | None = None
+        self._next_state = next_state
+        self._send_reply = send_reply
+
+    async def update(self, move: object) -> Status:
+        if self.over:
+            self.stray_calls += 1
+            if self.stray_calls > STRAY_CALLS_LIMIT and self.run is not None:
+                self.run.cancel()
+            raise FlightOver(FLIGHT_OVER_MESSAGE)
+        if not isinstance(move, Move):
+            msg = f'update() expects a Move, got {type(move).__name__}'
+            raise TypeError(msg)
+        await self._send_reply(models.Move(thrust=move.thrust, left=move.left, right=move.right))
+        try:
+            self.state = await self._next_state()
+        except Exception:  # noqa: BLE001 - whatever failed, the game is no longer there
+            self.over = self.game_gone = True
+            raise FlightOver(FLIGHT_OVER_MESSAGE) from None
+        self.ticks += 1
+        if self.state.status != FLYING:
+            self.over = True
+        return status_from_state(self.state)
+
+
+async def fly_script(  # noqa: PLR0913 - the flight's whole interface
+    pool: AsyncMonty,
+    plan: AgentRunResult[PilotScript],
+    ask_ai: AskAI,
+    *,
+    first_state: State,
+    next_state: NextState,
+    send_reply: SendReply,
+) -> FlightResult:
+    """Fly one flight with the planned script.
+
+    The script's `update(move)` sends the move and waits for the next state, so the
+    script runs the flight from start to finish. The run ends when the state turns
+    terminal, the script finishes or raises, or `next_state` raises (the game went away).
+    A script that dies with the game still listening gets an `Abort` sent on its behalf.
+    """
+    code = plan.output.code
+    link = GameLink(first_state, next_state, send_reply)
+    prints = PrintCollector()
+    externals: dict[str, object] = {
+        'update': link.update,
+        'ai': ask_ai,
+        **{cls.__name__: cls for cls in SANDBOX_TYPES},
+    }
+    error: str | None = None
+    with logfire.span(
+        'pilot script', code=code, lines=code.count('\n') + 1, strategy=plan.output.strategy
+    ) as span:
+        prints.context = get_context()
+        try:
+            async with pool.checkout(
+                script_name='pilot.py', limits=LIMITS, dataclass_registry=SANDBOX_TYPES
+            ) as session:
+                link.run = asyncio.ensure_future(
+                    session.feed_run(
+                        code,
+                        inputs=script_inputs(first_state),
+                        external_lookup=externals,
+                        print_callback=prints.on_print,
+                    )
+                )
+                span.set_attribute('returned', await link.run)
+        except asyncio.CancelledError:
+            if not (link.run is not None and link.run.cancelled()):
+                raise  # our own cancellation, not the stray-call cut-off
+        except MontyError as exc:
+            if not link.game_gone:
+                error = display_error(exc)
+                span.set_attribute('error', error)
+                span.record_exception(exc)
+        span.set_attribute('ticks', link.ticks)
+        span.set_attribute('status', link.state.status)
+
+    # Every state the game sent gets exactly one reply. The script answers all but the
+    # last one itself; the last is the terminal state it exited on, or the state it died on.
+    exited_early = error is None and not link.over
+    if not link.game_gone:
+        if link.state.status != FLYING:
+            await send_reply(models.Move())
+        elif error is not None:
+            await send_reply(models.Abort(reason=error.strip().splitlines()[-1]))
+        elif exited_early:
+            await send_reply(models.Abort(reason='the script exited while still flying'))
+    return FlightResult(
+        last_state=link.state,
+        ticks=link.ticks,
+        error=error,
+        output=prints.tail(),
+        exited_early=exited_early,
     )
-    when = f'after {state.tick * state.physics.dt:.1f} s (tick {state.tick})'
-    pad = state.pad
-    target = f'the landing pad spans x {pad.x1:.1f}..{pad.x2:.1f} at y {pad.y:.1f}'
-    if state.status == 'landed':
-        summary = f'Landed {when}.'
-    elif state.status == 'crashed':
-        summary = f'Crashed {when} at {where}; {target}.'
-    elif state.status == 'timeout':
-        limit = state.physics.max_flight_time
-        summary = (
-            f'Ran out of time: flights are cut off at {limit:.0f} s, still at {where}; {target}.'
-        )
-    else:
-        summary = f'The flight was cut short {when} while still flying at {where}; {target}.'
-    if flight.error is not None:
-        summary += (
-            f' The script stopped controlling the rocket after {flight.ticks_controlled} ticks'
-            ' because it raised an error (below).'
-        )
-    elif flight.done and state.status == FLYING:
-        summary += f' The script exited after {flight.ticks_controlled} ticks.'
-    return summary
-
-
-def tail(text: str, lines: int) -> str:
-    parts = text.splitlines()
-    if len(parts) <= lines:
-        return text
-    return '\n'.join([f'... ({len(parts) - lines} earlier lines omitted)', *parts[-lines:]])
 
 
 async def preflight(
-    pool: AsyncMonty, result: AgentRunResult[PilotScript], state: State, ask_ai: AskAI
+    pool: AsyncMonty, plan: AgentRunResult[PilotScript], state: State, ask_ai: AskAI
 ) -> str | None:
     """Run the script for a few synthetic ticks; the error it raised, if any."""
-    flight = Flight(pool, result, state, ask_ai)
-    flight.start()
-    finished_early = False
-    for i in range(PREFLIGHT_TICKS):
-        if await flight.next_move() is None:
-            finished_early = True
-            break
-        flight.push_state(state.model_copy(update={'tick': state.tick + i + 1}))
-    await flight.close()
-    if flight.error is not None:
-        return flight.error
-    if finished_early:
-        return (
-            f'the script finished after {flight.ticks_controlled} update() calls,'
-            ' long before landing'
-        )
+    states = (
+        state.model_copy(update={'tick': state.tick + i}) for i in range(1, PREFLIGHT_TICKS + 1)
+    )
+
+    async def next_state() -> State:
+        try:
+            return next(states)
+        except StopIteration:
+            raise FlightOver(FLIGHT_OVER_MESSAGE) from None
+
+    async def send_reply(_: models.Move | models.Abort) -> None:
+        return
+
+    result = await fly_script(
+        pool, plan, ask_ai, first_state=state, next_state=next_state, send_reply=send_reply
+    )
+    if result.error is not None:
+        return result.error
+    if result.ticks < PREFLIGHT_TICKS:
+        return f'the script finished after {result.ticks} update() calls, long before landing'
     return None
 
 
@@ -514,89 +524,3 @@ async def make_plan(
         memory.record(report, result)
     logger.error('no working pilot script after %d attempts', MAX_ATTEMPTS)
     return None
-
-
-class Pilot(Protocol):
-    """What the websocket handler needs from a controller."""
-
-    async def decide(self, state: State) -> models.Move | models.Abort: ...
-
-    async def close(self) -> None: ...
-
-
-class NaivePilot:
-    """The hand-written controller behind the `Pilot` interface."""
-
-    def __init__(self) -> None:
-        self._policy = Policy()
-
-    async def decide(self, state: State) -> models.Move:
-        return self._policy.decide(state)
-
-    async def close(self) -> None:
-        return
-
-
-class ScriptPilot:
-    """Flies one connection's single flight with the script from `GET /plan`.
-
-    The first state starts the script; a terminal state (or the connection closing)
-    ends it and records the report against the plan's `start_flight` call. If the script
-    dies the flight is aborted on the spot rather than left to drift. States that arrive
-    after that get idle moves.
-    """
-
-    def __init__(
-        self,
-        pool: AsyncMonty,
-        memory: PilotMemory,
-        plan: AgentRunResult[PilotScript],
-        ask_ai: AskAI,
-    ) -> None:
-        self._pool = pool
-        self._memory = memory
-        self._plan = plan
-        self._ask_ai = ask_ai
-        self._flight: Flight | None = None
-        self._finished = False
-
-    async def decide(self, state: State) -> models.Move | models.Abort:
-        if self._finished:
-            return models.Move()
-        flight = self._flight
-        if flight is None:
-            flight = self._flight = Flight(self._pool, self._plan, state, self._ask_ai)
-            flight.start()
-        else:
-            flight.push_state(state)
-        move = await flight.next_move()
-        if state.status != FLYING:
-            await self._finish()
-        if move is None:
-            if flight.error is not None and not self._finished:
-                # The script raised: end the flight now, with the exception on show.
-                await self._finish()
-                return models.Abort(reason=flight.error.strip().splitlines()[-1])
-            return models.Move()
-        return models.Move(thrust=move.thrust, left=move.left, right=move.right)
-
-    async def _finish(self) -> None:
-        flight = self._flight
-        if flight is None or self._finished:
-            return
-        self._finished = True
-        await flight.close()
-        report = flight.report()
-        self._memory.record(report, flight.result)
-        logfire.info(
-            'flight over: {outcome}',
-            outcome=report.outcome,
-            status=flight.last_state.status,
-            time=flight.last_state.tick * flight.last_state.physics.dt,
-            ticks_controlled=flight.ticks_controlled,
-            error=report.error,
-            output=report.output,
-        )
-
-    async def close(self) -> None:
-        await self._finish()

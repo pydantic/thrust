@@ -4,6 +4,8 @@ const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 5000;
 /** Drop the server's move if nothing new has arrived within this window. */
 const MOVE_TTL_MS = 500;
+/** Close code the server uses when it will not fly this connection (no plan). */
+const REFUSED_CLOSE_CODE = 1008;
 
 export interface ServerClient {
   readonly connected: boolean;
@@ -54,12 +56,17 @@ export function connectServer(url: string): ServerClient {
         abortReason = parsed.reason;
       }
     });
-    const onClose = (): void => {
+    const onClose = (event: CloseEvent): void => {
       if (socket !== ws) return;
       socket = null;
       connected = false;
       awaitingReply = false;
       latestMove = null;
+      if (event.code === REFUSED_CLOSE_CODE) {
+        // The server refused the flight (no plan): report it, do not retry.
+        abortReason = event.reason || "the auto-pilot server refused the flight";
+        closed = true;
+      }
       if (closed) return;
       reconnectTimer = window.setTimeout(open, backoff);
       backoff = Math.min(MAX_BACKOFF_MS, backoff * 2);

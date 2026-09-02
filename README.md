@@ -62,12 +62,10 @@ client derives `GET /plan` and the `/ws` socket from it.
 
 The default controller needs an API key for the model provider (for example
 `OPENAI_API_KEY`). Without one `GET /plan` fails and the game shows the error in the
-dialog; `THRUST_PILOT=naive` flies the hand-written controller instead. Environment
-variables:
+dialog. Environment variables:
 
 | Variable              | Default                                | Meaning                                       |
 | --------------------- | -------------------------------------- | --------------------------------------------- |
-| `THRUST_PILOT`        | `agent`                                | `agent` (LLM-written scripts) or `naive`      |
 | `THRUST_PILOT_MODEL`  | `openai:gpt-5.6-terra`                 | Model that writes the script (pydantic-ai id) |
 | `THRUST_HELPER_MODEL` | `openai:gpt-5.6-terra`                 | Model behind the script's `ai()`              |
 | `THRUST_MEMORY_FILE`  | `pilot_memory.json`                    | Where the agent's conversation is persisted   |
@@ -132,9 +130,8 @@ shown under the HUD for the whole run:
 ```
 
 A `503` with a `detail` string means no usable script could be produced. Each
-websocket connection flies exactly one flight with the most recent plan (or the
-hand-written controller if there is none); the client hangs up after the flight and
-plans again before the next one. While the plan request is live the game is held
+websocket connection flies exactly one flight with the most recent plan; the client
+hangs up after the flight and plans again before the next one. While the plan request is live the game is held
 and the HUD's `pilot` line reads "planning flight".
 
 The TypeScript types are in `src/protocol.ts` and the pydantic models in
@@ -173,18 +170,9 @@ or exits during that check is sent back to the writer with the error (up to thre
 attempts), after which the request fails with a 503 and the game shows the error. A script that dies mid-flight leaves the rocket idle; the error
 lands in the next prompt.
 
-The hand-written fallback, `Policy` in `server/thrust_server/naive_policy.py`
-(`THRUST_PILOT=naive` to use it always), is a two-phase cascaded controller.
-In transit it climbs to a cruise altitude that clears every mountain between the
-rocket and the pad, then flies toward the pad centre, only moving sideways once
-the terrain ahead is clear. Near the pad it switches to descent and comes straight
-down, slowing as it gets close and pausing the descent if crosswind pushes it off
-centre. Each tick it builds a desired acceleration from velocity errors, gravity
-and the wind drag, points the nose along it (tilt limited near the ground) and
-fires the engine when the acceleration needed along the nose exceeds half of what
-the engine gives. The simulation constants it needs (thrust, drag, rocket size)
-arrive in the `physics` block of every state message, so there is nothing to keep
-in sync with the client.
+A websocket connection made without a plan (nothing called `GET /plan`, or the plan
+has already flown) is closed with code 1008 and the reason "no plan: call GET /plan
+first"; the game shows that as a failed flight.
 
 ## Physics
 
