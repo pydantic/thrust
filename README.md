@@ -10,7 +10,11 @@ which replies with a move from the controller in `server/thrust_server/naive_pol
 
 - Up arrow: thrust
 - Left / right arrows: rotate
-- R or space: open the "Start new game" dialog; space in the dialog starts the game
+- R or space: open the "Start new game" dialog; space in the dialog starts a new game
+
+The dialog reports how long the last flight took, which is the number to beat,
+and shows its seed. "Replay seed" reruns whatever seed is in the field; terrain,
+pads and wind all come from the seed alone (for a given window width).
 
 The dialog has an "Enable AI control" checkbox. When ticked the game connects to
 the server and applies its moves, but you can still fly: the up arrow adds

@@ -23,6 +23,8 @@ export interface Frame {
   rocket: Rocket;
   inputs: Inputs;
   time: number;
+  /** The start dialog is open and physics is not running. */
+  paused: boolean;
   windAtRocket: Vec2;
   aiControl: boolean;
   connected: boolean;
@@ -133,6 +135,19 @@ export class Renderer {
 
     this.drawRocket(frame);
     this.drawHud(frame);
+    this.drawClock(frame);
+  }
+
+  /** Flight time, big and red in the top-right corner: the score. */
+  private drawClock(frame: Frame): void {
+    const { ctx } = this;
+    ctx.font = "bold 40px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = "#c00";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    const right = this.offsetX + frame.world.info.width * this.scale - 16;
+    ctx.fillText(`${frame.time.toFixed(1)} s`, right, this.offsetY + 12);
+    ctx.textAlign = "start";
   }
 
   private drawWind(frame: Frame, dt: number): void {
@@ -294,8 +309,10 @@ export class Renderer {
   private drawHud(frame: Frame): void {
     const { ctx } = this;
     const { rocket, windAtRocket } = frame;
+    const status = frame.paused && rocket.status === "flying" ? "paused" : rocket.status;
     const lines = [
-      `status  ${rocket.status}`,
+      `status  ${status}`,
+      `time    ${frame.time.toFixed(1)} s`,
       `vel     ${rocket.vx.toFixed(1)}, ${rocket.vy.toFixed(1)} m/s`,
       `angle   ${((rocket.angle * 180) / Math.PI).toFixed(0)}°`,
       `wind    ${windAtRocket.x.toFixed(1)}, ${windAtRocket.y.toFixed(1)} m/s`,
@@ -309,7 +326,7 @@ export class Renderer {
       ctx.fillText(line, this.offsetX + 12, this.offsetY + 12 + i * 17);
     });
 
-    if (rocket.status !== "flying") {
+    if (rocket.status !== "flying" && !frame.paused) {
       const msg = rocket.status === "landed" ? "Landed!" : "Crashed";
       ctx.font = "bold 36px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";

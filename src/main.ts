@@ -28,8 +28,7 @@ interface Game {
   time: number;
 }
 
-function spawn(): Game {
-  const seed = randomSeed();
+function spawn(seed: number = randomSeed()): Game {
   const rng = mulberry32(seed);
   const width = worldWidthFor(window.innerWidth / Math.max(1, window.innerHeight));
   const world = generateWorld(rng, seed, width);
@@ -74,7 +73,7 @@ function main(): void {
   let connectTimer: number | undefined;
 
   const dialog = createDialog(document, {
-    onStart(aiControl) {
+    onStart({ aiControl, seed }) {
       window.clearTimeout(connectTimer);
       if (aiControl && server === null) server = connectServer(WS_URL);
       if (!aiControl && server !== null) {
@@ -91,7 +90,7 @@ function main(): void {
           });
         }, CONNECT_TIMEOUT_MS);
       }
-      game = spawn();
+      game = spawn(seed);
       resize();
     },
   });
@@ -110,7 +109,8 @@ function main(): void {
     resize();
     window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
-      game = spawn();
+      // Same seed, regenerated for the new width.
+      game = spawn(game.world.seed);
       resize();
     }, RESIZE_DEBOUNCE_MS);
   });
@@ -131,7 +131,7 @@ function main(): void {
       keyboard.consumeRespawn();
     } else if (keyboard.consumeRespawn()) {
       accumulator = 0;
-      openDialog();
+      openDialog({ seed: game.world.seed });
     }
 
     while (!dialog.open && accumulator >= DT) {
@@ -159,14 +159,13 @@ function main(): void {
         world.info.width,
       );
       game.tick += 1;
-      game.time += DT;
+      // Game time is the score, so it stops the moment the flight ends.
+      if (rocket.status === "flying") game.time += DT;
       server?.send(buildState(game, windAtRocket));
       if (rocket.status !== "flying" && endDialogTimer === undefined) {
         const outcome = rocket.status;
-        endDialogTimer = window.setTimeout(
-          () => openDialog({ result: outcome }),
-          END_DIALOG_DELAY_MS,
-        );
+        const summary = { result: outcome, time: game.time, seed: world.seed };
+        endDialogTimer = window.setTimeout(() => openDialog(summary), END_DIALOG_DELAY_MS);
       }
     }
 
@@ -177,6 +176,7 @@ function main(): void {
       rocket: game.rocket,
       inputs,
       time: game.time,
+      paused: dialog.open,
       windAtRocket,
       aiControl: server !== null,
       connected: server?.connected ?? false,

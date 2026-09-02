@@ -92,6 +92,18 @@
         outline: 2px dashed #000;
         outline-offset: 2px;
       }
+      .dialog .seed input {
+        font: inherit;
+        border: 2px solid #000;
+        background: #fff;
+        color: #000;
+        padding: 4px 6px;
+        width: 12ch;
+      }
+      .dialog .seed input:focus-visible {
+        outline: 2px dashed #000;
+        outline-offset: 2px;
+      }
       .dialog button {
         font: inherit;
         background: #fff;
@@ -104,6 +116,13 @@
         background: #000;
         color: #fff;
       }
+      .dialog .buttons {
+        display: flex;
+        gap: 10px;
+      }
+      .dialog .buttons button {
+        flex: 1;
+      }
     </style>
   </head>
   <body>
@@ -115,7 +134,11 @@
         <p id="dialog-error" class="error" hidden></p>
         <p class="hint">&uarr; thrust &nbsp; &larr; &rarr; rotate &nbsp; R restart &nbsp; space start</p>
         <label><input type="checkbox" id="ai-control" /> Enable AI control</label>
-        <button type="submit">Start new game</button>
+        <label class="seed">Seed <input type="text" id="seed" inputmode="numeric" autocomplete="off" /></label>
+        <div class="buttons">
+          <button type="submit" id="start-new">Start new game</button>
+          <button type="submit" id="start-replay">Replay seed</button>
+        </div>
       </form>
     </div>
     <script type="module" src="/src/main.ts"></script>

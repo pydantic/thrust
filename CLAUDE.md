@@ -68,8 +68,11 @@ vertices in `ROCKET_VERTICES` against `terrainHeightAt`; the drawn rocket shape 
 the launch pad → keep resting (status stays `flying`, position pinned); anything else → `crashed`.
 Landing thresholds are the `LANDING_MAX_*` constants.
 
-**World generation (`src/world.ts`)** is seeded (`mulberry32`; seed shown in the HUD) so a world can
-be replayed. Terrain is a mean-reverting random walk; the launch pad is flattened in at the spawn,
+**World generation (`src/world.ts`)** is seeded (`mulberry32`; seed shown in the HUD and replayable
+from the dialog). Random draws are made in a width-independent order (terrain heights for the maximum
+width first, then positions as fractions of the real width) so a seed gives the same terrain profile
+at any viewport size and an identical game at the same size; the wind field is drawn from the same
+RNG afterwards. Terrain is a mean-reverting random walk; the launch pad is flattened in at the spawn,
 and the landing pad is the lowest of several candidates at least `MIN_PAD_SEPARATION` (40%) of the
 width away. Both flats are spliced into the polyline by `withFlats`; terrain x is strictly
 increasing, which `terrainHeightAt`'s binary search relies on.

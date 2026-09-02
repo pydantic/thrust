@@ -36,7 +36,41 @@ export function worldWidthFor(aspect: number): number {
   return clamp(WORLD_HEIGHT * aspect, MIN_WORLD_WIDTH, MAX_WORLD_WIDTH);
 }
 
+/**
+ * Generate a world from a seed. Random draws happen in a width-independent
+ * order (terrain heights for the maximum width first, then positions as
+ * fractions of the actual width) so the same seed gives the same terrain
+ * profile and the same relative layout whatever the viewport size.
+ */
 export function generateWorld(rng: Rng, seed: number, width: number): World {
+  // Mean-reverting random walk with bounded step, then one smoothing pass.
+  const maxSamples = Math.floor(MAX_WORLD_WIDTH / SAMPLE_SPACING) + 1;
+  let h = rng.range(8, 30);
+  const raw: number[] = [];
+  for (let i = 0; i < maxSamples; i++) {
+    const pull = (MEAN_HEIGHT - h) * MEAN_REVERSION;
+    h = clamp(h + pull + rng.range(-13, 13), MIN_HEIGHT, MAX_HEIGHT);
+    raw.push(h);
+  }
+  const smoothed = raw.map((v, i) => {
+    const prev = raw[i - 1] ?? v;
+    const next = raw[i + 1] ?? v;
+    return (prev + v + next) / 3;
+  });
+
+  // Keep the samples inside this width, plus one exactly at the right edge.
+  const xs: number[] = [];
+  const heights: number[] = [];
+  for (let i = 0; i < maxSamples; i++) {
+    const x = i * SAMPLE_SPACING;
+    if (x >= width) break;
+    xs.push(x);
+    heights.push(smoothed[i] as number);
+  }
+  const allPts: Array<[number, number]> = smoothed.map((y, i) => [i * SAMPLE_SPACING, y]);
+  xs.push(width);
+  heights.push(terrainHeightAt(allPts, width));
+
   const minSeparation = MIN_PAD_SEPARATION * width;
   const padCentreMin = 4 + PAD_WIDTH / 2;
   const padCentreMax = width - 4 - PAD_WIDTH / 2;
@@ -48,33 +82,13 @@ export function generateWorld(rng: Rng, seed: number, width: number): World {
         [spawn + minSeparation, padCentreMax],
       ] as Array<[number, number]>
     ).filter(([a, b]) => b > a);
-  let spawnX = rng.range(SPAWN_MARGIN, width - SPAWN_MARGIN);
+  let spawnX = SPAWN_MARGIN + rng.next() * (width - 2 * SPAWN_MARGIN);
   let padRanges = allowedRanges(spawnX);
   if (padRanges.length === 0) {
     // Narrow world with a central spawn: push the launch pad to an edge.
     spawnX = rng.next() < 0.5 ? SPAWN_MARGIN : width - SPAWN_MARGIN;
     padRanges = allowedRanges(spawnX);
   }
-
-  const sampleCount = Math.max(12, Math.round(width / SAMPLE_SPACING));
-  const xs: number[] = [];
-  for (let i = 0; i < sampleCount; i++) {
-    xs.push((width * i) / (sampleCount - 1));
-  }
-
-  // Mean-reverting random walk with bounded step, then one smoothing pass.
-  let h = rng.range(8, 30);
-  const raw: number[] = [];
-  for (let i = 0; i < sampleCount; i++) {
-    const pull = (MEAN_HEIGHT - h) * MEAN_REVERSION;
-    h = clamp(h + pull + rng.range(-13, 13), MIN_HEIGHT, MAX_HEIGHT);
-    raw.push(h);
-  }
-  const heights = raw.map((v, i) => {
-    const prev = raw[i - 1] ?? v;
-    const next = raw[i + 1] ?? v;
-    return (prev + v + next) / 3;
-  });
 
   const launchX1 = spawnX - LAUNCH_PAD_WIDTH / 2;
   const launchPad: Pad = {
@@ -99,9 +113,9 @@ export function generateWorld(rng: Rng, seed: number, width: number): World {
       }
       offset -= b - a;
     }
-    const h = heightAtSamples(xs, heights, centre);
-    if (h < padHeight) {
-      padHeight = h;
+    const hc = heightAtSamples(xs, heights, centre);
+    if (hc < padHeight) {
+      padHeight = hc;
       padCentre = centre;
     }
   }
