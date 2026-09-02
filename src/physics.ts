@@ -17,6 +17,7 @@ export const PHYSICS: PhysicsConstants = {
   landingMaxAngle: 0.28,
   landingMaxVy: 5,
   landingMaxVx: 3.2,
+  maxFlightTime: 90,
 };
 
 export const DT = PHYSICS.dt;
@@ -83,6 +84,7 @@ export function step(
   pad: Pad,
   launchPad: Pad,
   worldWidth: number,
+  worldHeight: number,
 ): void {
   if (rocket.status !== "flying") return;
 
@@ -111,14 +113,14 @@ export function step(
   rocket.x += rocket.vx * DT;
   rocket.y += rocket.vy * DT;
 
-  // Flying off the sides counts as a crash.
-  if (rocket.x < 0 || rocket.x > worldWidth) {
+  // The walls are hard: any corner touching a side or the top is a crash.
+  const corners = ROCKET_VERTICES.map((v) => toWorld(rocket, v));
+  if (corners.some((c) => c.x < 0 || c.x > worldWidth || c.y > worldHeight)) {
     rocket.status = "crashed";
     return;
   }
 
   // Ground contact.
-  const corners = ROCKET_VERTICES.map((v) => toWorld(rocket, v));
   const touching = corners.some((c) => c.y <= terrainHeightAt(terrain, c.x));
   if (!touching) return;
 

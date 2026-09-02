@@ -1,15 +1,15 @@
 import type { Status } from "./protocol";
 
-const AI_STORAGE_KEY = "thrust.aiControl";
+const AUTOPILOT_STORAGE_KEY = "thrust.autopilot";
 
 export interface ShowOptions {
   /** Outcome of the game that just ended. */
   result?: Exclude<Status, "flying">;
   /** Game time in seconds at which the game ended. */
   time?: number;
-  /** Seed of the game just played; prefilled so "Replay seed" reruns it. */
+  /** Seed of the game just played; prefilled so "Replay" reruns it. */
   seed?: number;
-  /** Problem with the previous start attempt, e.g. the AI server was unreachable. */
+  /** Problem with the previous start attempt, e.g. the auto-pilot server was unreachable. */
   error?: string;
 }
 
@@ -19,7 +19,9 @@ export interface Dialog {
 }
 
 export interface StartRequest {
-  aiControl: boolean;
+  autopilot: boolean;
+  /** Replay the same seed automatically when a flight ends, instead of showing the dialog. */
+  autoReplay: boolean;
   /** Seed to replay; undefined means pick a random one. */
   seed: number | undefined;
 }
@@ -34,30 +36,54 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   if (!(form instanceof HTMLFormElement)) throw new Error("#dialog-form is not a form");
   const result = must(document.getElementById("dialog-result"), "#dialog-result");
   const error = must(document.getElementById("dialog-error"), "#dialog-error");
-  const aiCheckbox = must(document.getElementById("ai-control"), "#ai-control");
+  const autopilotCheckbox = must(document.getElementById("autopilot"), "#autopilot");
+  const autoReplayCheckbox = must(document.getElementById("autoreplay"), "#autoreplay");
+  const seedLabel = must(document.getElementById("seed-label"), "#seed-label");
   const seedInput = must(document.getElementById("seed"), "#seed");
   const newButton = must(document.getElementById("start-new"), "#start-new");
   const replayButton = must(document.getElementById("start-replay"), "#start-replay");
-  if (!(aiCheckbox instanceof HTMLInputElement)) throw new Error("#ai-control is not an input");
+  if (!(autopilotCheckbox instanceof HTMLInputElement))
+    throw new Error("#autopilot is not an input");
+  if (!(autoReplayCheckbox instanceof HTMLInputElement))
+    throw new Error("#autoreplay is not an input");
   if (!(seedInput instanceof HTMLInputElement)) throw new Error("#seed is not an input");
   if (!(newButton instanceof HTMLButtonElement)) throw new Error("#start-new is not a button");
   if (!(replayButton instanceof HTMLButtonElement)) {
     throw new Error("#start-replay is not a button");
   }
 
-  aiCheckbox.checked = loadAiPreference();
+  autopilotCheckbox.checked = loadPreference(AUTOPILOT_STORAGE_KEY);
+  // Auto-replay is deliberate each time: always shown, never remembered.
+  autoReplayCheckbox.checked = false;
+
+  /**
+   * Until a seed is pinned in the URL the dialog is minimal: the two checkboxes
+   * and a Start button that runs the map already on screen.
+   */
+  let pinned = false;
+  /** Seed of the map behind the dialog, which Start runs when nothing is pinned. */
+  let shownSeed: number | undefined;
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const replay = event.submitter === replayButton;
-    const seed = replay ? parseSeed(seedInput.value) : undefined;
-    if (replay && seed === undefined) {
-      showError("Enter a seed (a whole number) to replay.");
-      return;
+    let seed: number | undefined;
+    if (replay) {
+      seed = parseSeed(seedInput.value);
+      if (seed === undefined) {
+        showError("Enter a seed (a whole number) to replay.");
+        return;
+      }
+    } else if (!pinned) {
+      seed = shownSeed;
     }
     root.hidden = true;
-    saveAiPreference(aiCheckbox.checked);
-    options.onStart({ aiControl: aiCheckbox.checked, seed });
+    savePreference(AUTOPILOT_STORAGE_KEY, autopilotCheckbox.checked);
+    options.onStart({
+      autopilot: autopilotCheckbox.checked,
+      autoReplay: autoReplayCheckbox.checked,
+      seed,
+    });
   });
 
   // Space starts a new game with the checkbox as-is, unless a control that
@@ -65,7 +91,8 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   // handler to ignore this press.
   document.addEventListener("keydown", (event) => {
     if (root.hidden || event.code !== "Space") return;
-    if (event.target === aiCheckbox || event.target === seedInput) return;
+    if (event.target === autopilotCheckbox || event.target === autoReplayCheckbox) return;
+    if (event.target === seedInput) return;
     if (event.target === replayButton) return;
     event.preventDefault();
     form.requestSubmit(newButton);
@@ -86,16 +113,31 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
       } else {
         result.hidden = false;
         const seconds = time === undefined ? "" : ` ${time.toFixed(1)} s`;
-        result.textContent =
-          outcome === "landed" ? `Landed in${seconds}` : `Crashed after${seconds}`;
+        result.textContent = resultText(outcome, seconds);
         result.className = `result ${outcome}`;
       }
       if (seed !== undefined) seedInput.value = String(seed);
+      shownSeed = seed;
+      pinned = new URLSearchParams(document.location.search).has("seed");
+      seedLabel.hidden = !pinned;
+      replayButton.hidden = !pinned;
+      newButton.textContent = pinned ? "New game" : "Start";
       showError(message);
       root.hidden = false;
       newButton.focus();
     },
   };
+}
+
+function resultText(outcome: Exclude<Status, "flying">, seconds: string): string {
+  switch (outcome) {
+    case "landed":
+      return `Landed in${seconds}`;
+    case "crashed":
+      return `Crashed after${seconds}`;
+    case "timeout":
+      return `Out of time after${seconds}`;
+  }
 }
 
 /** Accepts a non-negative integer; anything else is undefined. */
@@ -111,17 +153,17 @@ function must<T>(value: T | null, what: string): T {
   return value;
 }
 
-function loadAiPreference(): boolean {
+function loadPreference(key: string): boolean {
   try {
-    return localStorage.getItem(AI_STORAGE_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
-function saveAiPreference(enabled: boolean): void {
+function savePreference(key: string, enabled: boolean): void {
   try {
-    localStorage.setItem(AI_STORAGE_KEY, enabled ? "1" : "0");
+    localStorage.setItem(key, enabled ? "1" : "0");
   } catch {
     // Storage unavailable; the checkbox just won't be remembered.
   }

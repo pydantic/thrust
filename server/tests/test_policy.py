@@ -15,6 +15,7 @@ PHYSICS = Physics(
     landingMaxAngle=0.28,
     landingMaxVy=5,
     landingMaxVx=3.2,
+    maxFlightTime=90,
 )
 PAD = Pad(x1=120, x2=132, y=10)
 LAUNCH = Pad(x1=20, x2=30, y=20)

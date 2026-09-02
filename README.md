@@ -2,7 +2,7 @@
 
 A small rocket lander. The rocket starts resting on a launch pad and has to reach
 the green landing pad. Arrow keys fly the rocket, a random world is generated on
-every spawn, and random wind pushes the rocket around. With AI control enabled,
+every spawn, and random wind pushes the rocket around. With the auto-pilot enabled,
 every physics tick the game sends its state over a WebSocket to a FastAPI server,
 which replies with a move. By default the server asks an LLM to write an autopilot
 script for each flight and runs it in a sandbox; see [Autopilot](#autopilot).
@@ -11,18 +11,30 @@ script for each flight and runs it in a sandbox; see [Autopilot](#autopilot).
 
 - Up arrow: thrust
 - Left / right arrows: rotate
-- R or space: open the "Start new game" dialog; space in the dialog starts a new game
+- R or space: open the "New game" dialog; space in the dialog starts a new game
+
+On a fresh load without `?seed=N` the dialog is minimal: the two checkboxes and a
+"Start" button that flies the map already on screen. Once a seed is pinned in the
+URL (which happens as soon as a game starts) the dialog also offers the seed field,
+"Replay" and "New game".
 
 The dialog reports how long the last flight took, which is the number to beat,
-and shows its seed. "Replay seed" reruns whatever seed is in the field; terrain,
+and shows its seed. "Replay" (shown once a seed is in the URL) reruns whatever seed
+is in the field; terrain,
 pads and wind all come from the seed alone (for a given window width). The seed
 of the current game is kept in the URL as `?seed=N`, so reloading or sharing
 the link brings up the same game.
 
-The dialog has an "Enable AI control" checkbox. When ticked the game connects to
+A flight that is still going after 90 s ends as "Out of time", which counts as a
+failure. With "Enable auto-replay" ticked (always shown, off by default and not
+remembered), a finished flight restarts the same map after a moment instead of
+opening the dialog, so the auto-pilot can iterate on one seed hands-free; R brings
+the dialog back.
+
+The dialog has an "Enable auto-pilot" checkbox. When ticked the game connects to
 the server and applies its moves, but you can still fly: the up arrow adds
-thrust on top of the AI's, and holding left or right takes the rotation axis
-away from the AI while the key is down. When unticked no connection is made and
+thrust on top of the auto-pilot's, and holding left or right takes the rotation axis
+away from the auto-pilot while the key is down. When unticked no connection is made and
 only the keyboard steers. If the
 server cannot be reached within a second the dialog reopens with an error. The
 choice is remembered in localStorage.
@@ -44,19 +56,21 @@ uv sync
 uv run uvicorn thrust_server.main:app --reload --port 8000
 ```
 
-The server is only contacted when AI control is enabled. Set `VITE_WS_URL` to
-point the client at a different server.
+The server is only contacted when the auto-pilot is enabled. Set `VITE_SERVER_URL`
+(default `http://localhost:8000`) to point the client at a different server; the
+client derives `GET /plan` and the `/ws` socket from it.
 
 The default controller needs an API key for the model provider (for example
-`ANTHROPIC_API_KEY`). Without one the server logs an error and falls back to the
-hand-written controller for that flight. Environment variables:
+`OPENAI_API_KEY`). Without one `GET /plan` fails and the game shows the error in the
+dialog; `THRUST_PILOT=naive` flies the hand-written controller instead. Environment
+variables:
 
 | Variable              | Default                                | Meaning                                       |
 | --------------------- | -------------------------------------- | --------------------------------------------- |
 | `THRUST_PILOT`        | `agent`                                | `agent` (LLM-written scripts) or `naive`      |
-| `THRUST_PILOT_MODEL`  | `anthropic:claude-sonnet-5`            | Model that writes the script (pydantic-ai id) |
-| `THRUST_HELPER_MODEL` | `anthropic:claude-haiku-4-5-20251001`  | Cheap model behind the script's `ai()`        |
-| `THRUST_INSTRUCTIONS` | land on the pad as fast as possible    | The goal given to the script writer           |
+| `THRUST_PILOT_MODEL`  | `openai:gpt-5.6-terra`                 | Model that writes the script (pydantic-ai id) |
+| `THRUST_HELPER_MODEL` | `openai:gpt-5.6-terra`                 | Model behind the script's `ai()`              |
+| `THRUST_MEMORY_FILE`  | `pilot_memory.json`                    | Where the agent's conversation is persisted   |
 | `LOGFIRE_TOKEN`       | unset                                  | Send FastAPI and pydantic-ai traces to Logfire |
 
 ## Checks
@@ -102,6 +116,20 @@ Server to client:
 {"type": "move", "thrust": true, "left": false, "right": false}
 ```
 
+Before connecting, the client calls `GET /plan`, which has the agent write and
+pre-check the script for the next flight and answers with the script's own summary,
+shown under the HUD for the whole run:
+
+```json
+{"strategy": "Climb to 70 m, cross, then descend over the pad."}
+```
+
+A `503` with a `detail` string means no usable script could be produced. Each
+websocket connection flies exactly one flight with the most recent plan (or the
+hand-written controller if there is none); the client hangs up after the flight and
+plans again before the next one. While the plan request is live the game is held
+and the HUD's `pilot` line reads "planning flight".
+
 The TypeScript types are in `src/protocol.ts` and the pydantic models in
 `server/thrust_server/models.py`.
 
@@ -109,13 +137,16 @@ The TypeScript types are in `src/protocol.ts` and the pydantic models in
 
 `server/thrust_server/agent.py` holds a [pydantic-ai](https://ai.pydantic.dev) agent
 that writes a complete Python script for one flight. Its instructions describe the
-game, the exact physics and the sandbox API. The agent holds one conversation for the
-life of the server process: the first message states the goal, each script is submitted
+game, the exact physics, the goal and the sandbox API. The agent holds one conversation
+across all flights: the first message asks for a script, each script is submitted
 through a `submit_script` tool call, and the flight's outcome (how it ended, any
-traceback, the last lines printed) goes back as that tool call's result. Every new
-flight (a new connection, or a restart on the same connection) gets a freshly written
-script, so a session is a loop of submit, fly, report, with the goal and the last six
-script/result pairs kept in the history.
+traceback, the last lines printed) goes back as that tool call's result. `GET /plan`
+writes the script for the next flight and the following websocket connection flies
+it, so a session is a loop of plan, fly, report, with the opening message and the
+last six script/result pairs kept in the history. The conversation and the flight
+reports are written to `THRUST_MEMORY_FILE` (indented JSON, relative to `server/`) after
+every change and loaded on start, so restarting the server, including uvicorn's reloads,
+keeps iterating on the same script. Delete the file to start over.
 
 The script runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox
 (`server/thrust_server/autopilot.py`). It starts with the initial `status`, the
@@ -129,10 +160,10 @@ async def ai(query: str) -> str          # ask the cheap helper model mid-flight
 
 `update` hands the move to the game and waits for the next state message, so one
 call is exactly one physics tick and the script keeps running until the returned
-status is no longer `"flying"`. Before a script flies for real it is run for a few
-synthetic ticks; a script that raises or exits during that check is sent back to
-the writer with the error (up to three attempts), after which the naive controller
-takes the flight. A script that dies mid-flight leaves the rocket idle; the error
+status is no longer `"flying"`. Before a script flies for real, `GET /plan` runs it for a few
+synthetic ticks against the first state of the previous flight; a script that raises
+or exits during that check is sent back to the writer with the error (up to three
+attempts), after which the request fails with a 503 and the game shows the error. A script that dies mid-flight leaves the rocket idle; the error
 lands in the next prompt.
 
 The hand-written fallback, `Policy` in `server/thrust_server/naive_policy.py`
@@ -152,5 +183,7 @@ in sync with the client.
 
 Fixed 60 Hz timestep. Gravity 4 m/s², thrust 9 m/s² along the nose, rotation
 6 rad/s² with damping. Wind applies a linear drag toward the local wind velocity.
+Flights are capped at 90 s (`maxFlightTime`), after which the status becomes `timeout`.
 A landing counts if both base corners are on the pad, the rocket is within 0.28 rad
-of upright, and the vertical and horizontal speeds are under 5 and 3.2 m/s.
+of upright, and the vertical and horizontal speeds are under 5 and 3.2 m/s. The walls
+are hard: any corner of the rocket touching a side of the world or its top is a crash.

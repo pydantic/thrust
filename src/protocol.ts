@@ -1,6 +1,6 @@
 /** Messages exchanged with the FastAPI server over the WebSocket. */
 
-export type Status = "flying" | "landed" | "crashed";
+export type Status = "flying" | "landed" | "crashed" | "timeout";
 
 export interface Vec2 {
   x: number;
@@ -47,6 +47,8 @@ export interface PhysicsConstants {
   landingMaxAngle: number;
   landingMaxVy: number;
   landingMaxVx: number;
+  /** A flight still going after this many seconds ends with status "timeout". */
+  maxFlightTime: number;
 }
 
 /** Client -> server. Units are world metres, y up. */
@@ -73,6 +75,17 @@ export interface MoveMessage {
   thrust: boolean;
   left: boolean;
   right: boolean;
+}
+
+/** Response of `GET /plan`: the auto-pilot has written a script for the next flight. */
+export interface PlanResponse {
+  /** The script's own description of how it intends to fly. */
+  strategy: string;
+}
+
+export function isPlanResponse(value: unknown): value is PlanResponse {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof (value as Record<string, unknown>).strategy === "string";
 }
 
 export function isMoveMessage(value: unknown): value is MoveMessage {

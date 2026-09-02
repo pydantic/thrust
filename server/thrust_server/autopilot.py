@@ -3,9 +3,9 @@
 The script is plain Python executed by monty. It sees the world through a handful of
 predefined names (the dataclasses below plus `update`/`ai`) and steers the rocket by
 awaiting `update(move)` once per physics tick; the move is sent to the game and the call
-returns once the next state arrives. One `Flight` wraps one script run; `AgentPilot`
-drives a websocket connection, starting a new flight (and asking the agent for a new
-script) every time the game restarts.
+returns once the next state arrives. One `Flight` wraps one script run; `make_plan` asks
+the agent for the next script (behind `GET /plan`) and `ScriptPilot` flies it for one
+websocket connection.
 """
 
 from __future__ import annotations
@@ -13,9 +13,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
+from pydantic import BaseModel, Field
+from pydantic_ai import AgentRunResult, ModelMessage
 from pydantic_monty import (
     AsyncMonty,
     CollectString,
@@ -27,12 +30,8 @@ from pydantic_monty import (
 )
 
 from thrust_server import models
+from thrust_server.models import State
 from thrust_server.naive_policy import Policy
-
-if TYPE_CHECKING:
-    from pydantic_ai import AgentRunResult
-
-    from thrust_server.models import State
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +57,7 @@ class Status:
     """The rocket after a move was applied for one tick. Returned by `update`."""
 
     status: str
-    """`"flying"`, `"landed"` or `"crashed"`. The flight is over once it is not flying."""
+    """`"flying"`, `"landed"`, `"crashed"` or `"timeout"`. Over once it is not flying."""
     tick: int
     time: float
     """Seconds since the start of the flight (`tick * physics.dt`). This is the score."""
@@ -90,7 +89,7 @@ class Pad:
 @dataclass
 class World:
     width: float
-    """Metres. Leaving the world sideways (x < 0 or x > width) is a crash."""
+    """Metres. The walls are hard: a corner past x = 0, x = width or y = height is a crash."""
     height: float
     gravity: float
     """m/s^2, always pulling down."""
@@ -122,6 +121,8 @@ class Physics:
     """|vy| must be below this (m/s) on contact with the pad."""
     landing_max_vx: float
     """|vx| must be below this (m/s) on contact with the pad."""
+    max_flight_time: float
+    """A flight still going after this many seconds ends with status "timeout": a failure."""
 
 
 SANDBOX_TYPES: list[type] = [Move, Status, Pad, World, Physics]
@@ -196,8 +197,16 @@ def script_inputs(state: State) -> dict[str, object]:
     }
 
 
-@dataclass
-class RunReport:
+class PilotScript(BaseModel, use_attribute_docstrings=True):
+    """What the agent submits for one flight."""
+
+    code: str
+    """The complete Python source of the script, run unchanged."""
+    strategy: str
+    """Short summary of the strategy used by the auto-pilot."""
+
+
+class RunReport(BaseModel):
     """What the agent is told about a previous flight."""
 
     code: str
@@ -208,28 +217,61 @@ class RunReport:
     output: str = ''
     """Tail of what the script printed."""
 
+    def feedback(self) -> str:
+        """The `submit_script` tool result for this flight, so the agent can improve."""
+        parts = [self.outcome]
+        if self.error:
+            parts.append(f'It raised this error:\n```\n{self.error}\n```')
+        if self.output:
+            parts.append(f'Last lines it printed:\n```\n{self.output}\n```')
+        parts.append(
+            'Fix what went wrong and improve on it, or rewrite if the approach was flawed,'
+            ' then submit the complete new script.'
+        )
+        return '\n\n'.join(parts)
 
-@dataclass
-class PilotMemory:
+
+class PilotMemory(BaseModel):
     """Shared across connections so each flight can learn from the previous ones.
 
-    `last_result` is the agent run that produced the current script; its messages are the
-    running conversation, in which every script is a `submit_script` tool call whose result
-    is the flight report. `pending` is the report the agent has not been told about yet.
+    `messages` is the running conversation with the script-writing agent, in which every
+    script is a `submit_script` tool call whose result is the flight report; it only ever
+    holds completed script/report pairs. With a `path` the memory is written to disk as
+    JSON after every report and loaded again on start, so a server restart carries on
+    iterating on the same script. A flight cut short by a restart is simply not in it.
     """
 
-    last_result: AgentRunResult[Any] | None = None
-    history: list[RunReport] = field(default_factory=list)
-    pending: RunReport | None = None
+    messages: list[ModelMessage] = []
+    history: list[RunReport] = []
+    last_state: State | None = None
+    """The first state of the most recent flight, which pre-flight checks fly against."""
+    path: Path | None = Field(default=None, exclude=True)
+
+    @classmethod
+    def load(cls, path: Path) -> PilotMemory:
+        if not path.exists():
+            return cls(path=path)
+        memory = cls.model_validate_json(path.read_text())
+        memory.path = path
+        logger.info('loaded pilot memory from %s (%d flights)', path, len(memory.history))
+        return memory
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(self.model_dump_json(indent=2))
 
     @property
     def last_run(self) -> RunReport | None:
         return self.history[-1] if self.history else None
 
-    def record(self, report: RunReport) -> None:
+    def record(self, report: RunReport, result: AgentRunResult[PilotScript]) -> None:
+        """Store the report as the result of the `submit_script` call that wrote the script."""
         self.history.append(report)
         del self.history[:-HISTORY_SIZE]
-        self.pending = report
+        self.messages = result.all_messages(output_tool_return_content=report.feedback())
+        self.save()
 
 
 class Flight:
@@ -239,9 +281,17 @@ class Flight:
     sandbox, calls `update` which hands a move to the game and waits for the next state.
     """
 
-    def __init__(self, pool: AsyncMonty, code: str, first_state: State, ask_ai: AskAI) -> None:
+    def __init__(
+        self,
+        pool: AsyncMonty,
+        result: AgentRunResult[PilotScript],
+        first_state: State,
+        ask_ai: AskAI,
+    ) -> None:
         self._pool = pool
-        self.code = code
+        self.result = result
+        """The agent run that wrote the script; the flight report becomes its tool result."""
+        self.code = result.output.code
         self._ask_ai = ask_ai
         self._states: asyncio.Queue[State | None] = asyncio.Queue()
         self._moves: asyncio.Queue[Move | None] = asyncio.Queue()
@@ -367,6 +417,11 @@ def describe_outcome(flight: Flight) -> str:
         summary = f'Landed {when}.'
     elif state.status == 'crashed':
         summary = f'Crashed {when} at {where}; {target}.'
+    elif state.status == 'timeout':
+        limit = state.physics.max_flight_time
+        summary = (
+            f'Ran out of time: flights are cut off at {limit:.0f} s, still at {where}; {target}.'
+        )
     else:
         summary = f'The flight was cut short {when} while still flying at {where}; {target}.'
     if flight.error is not None:
@@ -386,9 +441,11 @@ def tail(text: str, lines: int) -> str:
     return '\n'.join([f'... ({len(parts) - lines} earlier lines omitted)', *parts[-lines:]])
 
 
-async def preflight(pool: AsyncMonty, code: str, state: State, ask_ai: AskAI) -> str | None:
+async def preflight(
+    pool: AsyncMonty, result: AgentRunResult[PilotScript], state: State, ask_ai: AskAI
+) -> str | None:
     """Run the script for a few synthetic ticks; the error it raised, if any."""
-    flight = Flight(pool, code, state, ask_ai)
+    flight = Flight(pool, result, state, ask_ai)
     flight.start()
     finished_early = False
     for i in range(PREFLIGHT_TICKS):
@@ -407,7 +464,31 @@ async def preflight(pool: AsyncMonty, code: str, state: State, ask_ai: AskAI) ->
     return None
 
 
-WriteCode = Callable[[str, PilotMemory], Awaitable[str]]
+WriteCode = Callable[[PilotMemory], Awaitable[AgentRunResult[PilotScript]]]
+
+
+async def make_plan(
+    pool: AsyncMonty, memory: PilotMemory, write_code: WriteCode, ask_ai: AskAI
+) -> AgentRunResult[PilotScript] | None:
+    """Ask the agent for a script that survives the pre-flight check; `None` if none did.
+
+    The check flies the script against the last state the game sent, so on the very
+    first plan of a fresh memory there is nothing to check against and the script goes
+    straight through. Errors from the agent itself propagate.
+    """
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        result = await write_code(memory)
+        if memory.last_state is None:
+            logger.info('no flight seen yet, skipping the pre-flight check')
+            return result
+        error = await preflight(pool, result, memory.last_state, ask_ai)
+        if error is None:
+            return result
+        logger.warning('script failed pre-flight (attempt %d), asking again:\n%s', attempt, error)
+        report = RunReport(code=result.output.code, outcome=PREFLIGHT_OUTCOME, error=error)
+        memory.record(report, result)
+    logger.error('no working pilot script after %d attempts', MAX_ATTEMPTS)
+    return None
 
 
 class Pilot(Protocol):
@@ -431,96 +512,55 @@ class NaivePilot:
         return
 
 
-class AgentPilot:
-    """One per connection. Asks the agent for a script at the start of every flight.
+class ScriptPilot:
+    """Flies one connection's single flight with the script from `GET /plan`.
 
-    If the agent cannot produce a script (no API key, network down) the naive policy flies
-    that flight instead so the game stays playable.
+    The first state starts the script; a terminal state (or the connection closing)
+    ends it and records the report against the plan's `submit_script` call. States that
+    arrive after that get idle moves.
     """
 
     def __init__(
         self,
         pool: AsyncMonty,
         memory: PilotMemory,
-        *,
-        instructions: str,
-        write_code: WriteCode,
+        plan: AgentRunResult[PilotScript],
         ask_ai: AskAI,
     ) -> None:
         self._pool = pool
         self._memory = memory
-        self._instructions = instructions
-        self._write_code = write_code
+        self._plan = plan
         self._ask_ai = ask_ai
         self._flight: Flight | None = None
-        self._fallback: NaivePilot | None = None
-        self._last: State | None = None
-
-    def _is_new_flight(self, state: State) -> bool:
-        if state.status != FLYING:
-            return False
-        last = self._last
-        return last is None or last.status != FLYING or state.tick < last.tick
+        self._finished = False
 
     async def decide(self, state: State) -> models.Move:
-        if self._is_new_flight(state):
-            await self._finish_flight()
-            await self._start_flight(state)
-        self._last = state
-        if self._fallback is not None:
-            move = await self._fallback.decide(state)
-            if state.status != FLYING:
-                self._fallback = None
-            return move
+        if self._finished:
+            return models.Move()
         flight = self._flight
         if flight is None:
-            return models.Move()
-        if state is not flight.first_state:
+            code = self._plan.output.code
+            logger.info('flying planned script (%d lines):\n%s', code.count('\n') + 1, code)
+            flight = self._flight = Flight(self._pool, self._plan, state, self._ask_ai)
+            flight.start()
+        else:
             flight.push_state(state)
         move = await flight.next_move()
         if state.status != FLYING:
-            await self._finish_flight()
+            await self._finish()
         if move is None:
             return models.Move()
         return models.Move(thrust=move.thrust, left=move.left, right=move.right)
 
-    async def _start_flight(self, state: State) -> None:
-        self._fallback = None
-        code = await self._working_script(state)
-        if code is None:
-            self._fallback = NaivePilot()
-            return
-        logger.info('new pilot script (%d lines):\n%s', code.count('\n') + 1, code)
-        self._flight = Flight(self._pool, code, state, self._ask_ai)
-        self._flight.start()
-
-    async def _working_script(self, state: State) -> str | None:
-        """Ask the agent for a script that survives the pre-flight check, or `None`."""
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                code = await self._write_code(self._instructions, self._memory)
-            except Exception:
-                logger.exception('could not get a pilot script from the agent')
-                return None
-            error = await preflight(self._pool, code, state, self._ask_ai)
-            if error is None:
-                return code
-            logger.warning('pilot script failed pre-flight, asking again:\n%s', error)
-            self._memory.record(RunReport(code=code, outcome=PREFLIGHT_OUTCOME, error=error))
-        logger.error(
-            'no working pilot script after %d attempts, using the naive policy', MAX_ATTEMPTS
-        )
-        return None
-
-    async def _finish_flight(self) -> None:
+    async def _finish(self) -> None:
         flight = self._flight
-        if flight is None:
+        if flight is None or self._finished:
             return
-        self._flight = None
+        self._finished = True
         await flight.close()
         report = flight.report()
-        self._memory.record(report)
+        self._memory.record(report, flight.result)
         logger.info('flight over: %s', report.outcome)
 
     async def close(self) -> None:
-        await self._finish_flight()
+        await self._finish()

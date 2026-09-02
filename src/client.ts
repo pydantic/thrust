@@ -35,7 +35,6 @@ export function connectServer(url: string): ServerClient {
       backoff = MIN_BACKOFF_MS;
     });
     ws.addEventListener("message", (event) => {
-      awaitingReply = false;
       let parsed: unknown;
       try {
         parsed = JSON.parse(String(event.data));
@@ -43,6 +42,7 @@ export function connectServer(url: string): ServerClient {
         return;
       }
       if (isMoveMessage(parsed)) {
+        awaitingReply = false;
         latestMove = parsed;
         latestMoveAt = performance.now();
       }

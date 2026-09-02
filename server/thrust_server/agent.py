@@ -11,35 +11,26 @@ from __future__ import annotations
 import inspect
 import os
 
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelMessage, ModelResponse, ToolOutput
+from pydantic_ai import Agent, AgentRunResult, ModelMessage, ModelResponse, ToolOutput
 from pydantic_ai.capabilities import ProcessHistory
 
-from thrust_server.autopilot import SANDBOX_TYPES, PilotMemory, RunReport
+from thrust_server.autopilot import SANDBOX_TYPES, PilotMemory, PilotScript, RunReport
 
 __all__ = (
-    'DEFAULT_INSTRUCTIONS',
+    'FIRST_PROMPT',
     'HELPER_MODEL',
     'PILOT_MODEL',
     'PilotScript',
     'RunReport',
     'ask_helper',
-    'feedback',
-    'first_prompt',
     'helper_agent',
     'pilot_agent',
     'trim_history',
     'write_pilot',
 )
 
-PILOT_MODEL = os.environ.get('THRUST_PILOT_MODEL', 'gateway/anthropic:claude-sonnet-5')
-HELPER_MODEL = os.environ.get('THRUST_HELPER_MODEL', 'gateway/anthropic:claude-haiku-4-5-20251001')
-
-DEFAULT_INSTRUCTIONS = (
-    'Take off from the launch pad, fly to the landing pad and land on it as quickly as you can.'
-    ' Time to touchdown is the score, but a crash scores nothing, so land reliably first'
-    ' and fast second.'
-)
+PILOT_MODEL = os.environ.get('THRUST_PILOT_MODEL', 'openai:gpt-5.6-terra')
+HELPER_MODEL = os.environ.get('THRUST_HELPER_MODEL', 'openai:gpt-5.6-terra')
 
 
 def api_stub() -> str:
@@ -97,7 +88,9 @@ then submit the next script.
 
 - `await update(move)` is one tick of `physics.dt` seconds. The script must keep calling it,
   computing the next move from the returned `Status`, until the status is not `"flying"`,
-  and then finish. A flight is thousands of ticks, so keep the per-tick work small and
+  and then finish. A flight that is still going after `physics.max_flight_time` seconds
+  ends with status `"timeout"`, which counts as a failure like a crash. A flight is
+  thousands of ticks, so keep the per-tick work small and
   never sleep or busy-wait.
 - The simulation does not pause while the script thinks. If more than about half a second
   passes between two `update` calls the rocket flies on with no input, and if the script
@@ -116,10 +109,11 @@ has three corners: the nose tip `0.6 * rocket_height` above the centre along the
 and two base corners `0.4 * rocket_height` below it, `rocket_half_base` either side. The
 terrain is a polyline; the ground height at any x is the linear interpolation between the
 two surrounding points (write a helper for it). Pads are flat parts of the terrain. Leaving
-the world sideways is a crash. There is no ceiling, but the world is `world.height` tall and
-mountains can reach a good fraction of that, so plan a cruising altitude that clears every
-peak between you and the pad with margin. The rocket starts upright at rest on the launch
-pad, already `"flying"`, and the clock is running.
+the world is a crash: the walls are hard, and any corner of the rocket touching the left or
+right edge or the top (`y > world.height`) ends the flight. Mountains can reach a good
+fraction of that height, so plan a cruising altitude that clears every peak between you
+and the pad with margin while staying well below the top. The rocket starts upright at
+rest on the launch pad, already `"flying"`, and the clock is running.
 
 ## Physics, exactly as the game computes each tick
 
@@ -133,11 +127,21 @@ ay = wind_drag * (wind_y - vy) - gravity + (cos(angle) * thrust_accel if thrust 
 vx += ax * dt;  vy += ay * dt;  x += vx * dt;  y += vy * dt
 ```
 
+The wind is a steady base of 1.5 to 7 m/s, mostly horizontal and never reversing, with
+swirling gusts of up to 60% on top, so the local wind changes as you move and can reach
+12 m/s. Read `wind_x`/`wind_y` every tick rather than assuming a constant.
+
 Thrust and rotation are on/off, so hovering means pulsing the engine on roughly
 `gravity / thrust_accel` of the ticks, and a nose tilt of `angle` gives a sideways
 acceleration of `thrust_accel * sin(angle)` while thrusting. Rotation has inertia and
 damping: to hold an angle, steer the angular velocity toward `k * (target - angle)` and
 apply left/right with a dead band, rather than flipping the inputs every tick.
+
+## Goal
+
+Take off from the launch pad, fly to the landing pad and land on it as quickly as you can.
+Time to touchdown is the score, but a crash scores nothing, so land reliably first and
+fast second.
 
 ## Landing rules
 
@@ -195,12 +199,6 @@ def trim_history(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[:1] + tail
 
 
-class PilotScript(BaseModel):
-    """What the agent submits for one flight."""
-
-    code: str = Field(description='The complete Python source of the script, run unchanged.')
-
-
 pilot_agent: Agent[None, PilotScript] = Agent(
     PILOT_MODEL,
     name='thrust-pilot',
@@ -208,7 +206,10 @@ pilot_agent: Agent[None, PilotScript] = Agent(
     output_type=ToolOutput(
         PilotScript,
         name='submit_script',
-        description='Submit the script for the next flight. Returns how the flight went.',
+        description=(
+            'Submit the script for the next flight, with a short strategy for the player'
+            ' watching. Returns how the flight went.'
+        ),
     ),
     capabilities=[ProcessHistory(trim_history)],
     defer_model_check=True,
@@ -226,44 +227,18 @@ helper_agent: Agent[None, str] = Agent(
 )
 
 
-def first_prompt(instructions: str) -> str:
-    return f'Goal: {instructions}\n\nSubmit the script for the first flight.'
+FIRST_PROMPT = 'Submit the script for the first flight.'
 
 
-def feedback(report: RunReport) -> str:
-    """The `submit_script` tool result for a flight: what happened, so the agent can improve."""
-    parts = [report.outcome]
-    if report.error:
-        parts.append(f'It raised this error:\n```\n{report.error}\n```')
-    if report.output:
-        parts.append(f'Last lines it printed:\n```\n{report.output}\n```')
-    parts.append(
-        'Fix what went wrong and improve on it, or rewrite if the approach was flawed,'
-        ' then submit the complete new script.'
-    )
-    return '\n\n'.join(parts)
-
-
-NO_FEEDBACK = 'That script was never flown. Submit the script for the next flight.'
-
-
-async def write_pilot(instructions: str, memory: PilotMemory) -> str:
+async def write_pilot(memory: PilotMemory) -> AgentRunResult[PilotScript]:
     """Ask for the next script, continuing the conversation held in `memory`.
 
-    The previous flight's report goes back as the result of the `submit_script` call that
-    produced its script, so the agent sees each script followed by how it did.
+    The returned run is handed back to `PilotMemory.record` with the flight report, which
+    becomes the result of its `submit_script` call; until then it belongs to the flight.
     """
-    if memory.last_result is None:
-        result = await pilot_agent.run(first_prompt(instructions))
-    else:
-        report = memory.pending
-        history = memory.last_result.all_messages(
-            output_tool_return_content=NO_FEEDBACK if report is None else feedback(report)
-        )
-        result = await pilot_agent.run(message_history=history)
-    memory.pending = None
-    memory.last_result = result
-    return result.output.code
+    if memory.messages:
+        return await pilot_agent.run(message_history=memory.messages)
+    return await pilot_agent.run(FIRST_PROMPT)
 
 
 async def ask_helper(query: str) -> str:

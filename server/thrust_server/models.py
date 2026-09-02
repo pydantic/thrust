@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Status = Literal['flying', 'landed', 'crashed']
+Status = Literal['flying', 'landed', 'crashed', 'timeout']
 
 
 class Vec2(BaseModel):
@@ -54,6 +54,8 @@ class Physics(BaseModel):
     landing_max_angle: float = Field(alias='landingMaxAngle')
     landing_max_vy: float = Field(alias='landingMaxVy')
     landing_max_vx: float = Field(alias='landingMaxVx')
+    max_flight_time: float = Field(alias='maxFlightTime')
+    """A flight still going after this many seconds ends with status "timeout"."""
 
 
 class State(BaseModel):
@@ -75,6 +77,13 @@ class State(BaseModel):
     """Terrain polyline, x increasing."""
     world: WorldInfo
     physics: Physics
+
+
+class Plan(BaseModel):
+    """Response of `GET /plan`: a script has been written for the next flight."""
+
+    strategy: str
+    """The script's own description of how it intends to fly."""
 
 
 class Move(BaseModel):

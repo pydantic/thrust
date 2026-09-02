@@ -54,7 +54,8 @@
       .dialog .result.landed {
         color: #0a0;
       }
-      .dialog .result.crashed {
+      .dialog .result.crashed,
+      .dialog .result.timeout {
         color: #c00;
       }
       .dialog .error {
@@ -70,6 +71,9 @@
         gap: 10px;
         cursor: pointer;
         user-select: none;
+      }
+      .dialog label[hidden] {
+        display: none;
       }
       .dialog input[type="checkbox"] {
         appearance: none;
@@ -133,11 +137,12 @@
         <p id="dialog-result" class="result" hidden></p>
         <p id="dialog-error" class="error" hidden></p>
         <p class="hint">&uarr; thrust &nbsp; &larr; &rarr; rotate &nbsp; R restart &nbsp; space start</p>
-        <label><input type="checkbox" id="ai-control" /> Enable AI control</label>
-        <label class="seed">Seed <input type="text" id="seed" inputmode="numeric" autocomplete="off" /></label>
+        <label><input type="checkbox" id="autopilot" /> Enable auto-pilot</label>
+        <label><input type="checkbox" id="autoreplay" /> Enable auto-replay</label>
+        <label class="seed" id="seed-label">Seed <input type="text" id="seed" inputmode="numeric" autocomplete="off" /></label>
         <div class="buttons">
-          <button type="submit" id="start-new">Start new game</button>
-          <button type="submit" id="start-replay">Replay seed</button>
+          <button type="submit" id="start-new">New game</button>
+          <button type="submit" id="start-replay">Replay</button>
         </div>
       </form>
     </div>

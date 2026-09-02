@@ -12,7 +12,7 @@ const WIND_LINE_MAX = 2;
 /** Visual speed-up so the drift is easy to see. */
 const WIND_ADVECT = 1.5;
 /**
- * Time constant (s) for smoothing the flame. The AI's thrust is bang-bang at up
+ * Time constant (s) for smoothing the flame. The auto-pilot's thrust is bang-bang at up
  * to 30 Hz, so the raw command flickers; the flame shows the average throttle.
  */
 const FLAME_SMOOTHING_S = 0.3;
@@ -26,10 +26,20 @@ export interface Frame {
   /** The start dialog is open and physics is not running. */
   paused: boolean;
   windAtRocket: Vec2;
-  aiControl: boolean;
+  autopilot: boolean;
+  /** Waiting for `GET /plan`: the auto-pilot is writing its script. */
+  planning: boolean;
   connected: boolean;
   serverActive: boolean;
+  /** The auto-pilot script's own description of its plan, shown under the HUD. */
+  strategy: string | null;
 }
+
+/** The HUD text is refreshed at most this often so the numbers are readable. */
+const HUD_INTERVAL_MS = 100;
+const HUD_FONT = "13px ui-monospace, SFMono-Regular, Menlo, monospace";
+const HUD_LINE_PX = 17;
+const STRATEGY_MAX_WIDTH_PX = 460;
 
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
@@ -38,7 +48,7 @@ export class Renderer {
   private offsetY = 0;
   private particles: Vec2[] = [];
   private particleSeed = -1;
-  private lastTime = 0;
+  private lastDrawAt = 0;
   /** Smoothed throttle in [0, 1] driving the flame length. */
   private flame = 0;
 
@@ -79,13 +89,15 @@ export class Renderer {
 
     if (this.particleSeed !== world.seed) {
       this.particleSeed = world.seed;
-      this.lastTime = frame.time;
       this.flame = 0;
       this.particles = [];
       for (let i = 0; i < WIND_PARTICLES; i++) this.particles.push(this.spawnParticle(world));
     }
-    const dt = Math.max(0, Math.min(0.1, frame.time - this.lastTime));
-    this.lastTime = frame.time;
+    // Wall-clock time drives the visuals, so the wind keeps blowing and the
+    // flame keeps fading while the game is held (dialog open, planning, ended).
+    const now = performance.now() / 1000;
+    const dt = Math.max(0, Math.min(0.1, now - this.lastDrawAt));
+    this.lastDrawAt = now;
 
     const throttle = frame.inputs.thrust && frame.rocket.status === "flying" ? 1 : 0;
     this.flame += (throttle - this.flame) * (1 - Math.exp(-dt / FLAME_SMOOTHING_S));
@@ -306,28 +318,34 @@ export class Renderer {
     ctx.closePath();
   }
 
+  private hudLines: string[] = [];
+  private hudUpdatedAt = Number.NEGATIVE_INFINITY;
+
   private drawHud(frame: Frame): void {
     const { ctx } = this;
-    const { rocket, windAtRocket } = frame;
-    const status = frame.paused && rocket.status === "flying" ? "paused" : rocket.status;
-    const lines = [
-      `status  ${status}`,
-      `time    ${frame.time.toFixed(1)} s`,
-      `vel     ${rocket.vx.toFixed(1)}, ${rocket.vy.toFixed(1)} m/s`,
-      `angle   ${((rocket.angle * 180) / Math.PI).toFixed(0)}°`,
-      `wind    ${windAtRocket.x.toFixed(1)}, ${windAtRocket.y.toFixed(1)} m/s`,
-      `ai      ${aiStatus(frame)}`,
-      `seed    ${frame.world.seed}`,
-    ];
+    const { rocket } = frame;
     ctx.fillStyle = "#000";
-    ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.font = HUD_FONT;
     ctx.textBaseline = "top";
-    lines.forEach((line, i) => {
-      ctx.fillText(line, this.offsetX + 12, this.offsetY + 12 + i * 17);
+    const now = performance.now();
+    if (now - this.hudUpdatedAt >= HUD_INTERVAL_MS) {
+      this.hudUpdatedAt = now;
+      this.hudLines = hudLines(frame);
+      if (frame.strategy !== null) {
+        this.hudLines.push("", ...wrapText(ctx, frame.strategy, STRATEGY_MAX_WIDTH_PX));
+      }
+    }
+    this.hudLines.forEach((line, i) => {
+      ctx.fillText(line, this.offsetX + 12, this.offsetY + 12 + i * HUD_LINE_PX);
     });
 
     if (rocket.status !== "flying" && !frame.paused) {
-      const msg = rocket.status === "landed" ? "Landed!" : "Crashed";
+      const msg =
+        rocket.status === "landed"
+          ? "Landed!"
+          : rocket.status === "crashed"
+            ? "Crashed"
+            : "Out of time";
       ctx.font = "bold 36px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
       const cx = this.offsetX + (frame.world.info.width * this.scale) / 2;
@@ -339,8 +357,40 @@ export class Renderer {
   }
 }
 
-function aiStatus(frame: Frame): string {
-  if (!frame.aiControl) return "off";
+function hudLines(frame: Frame): string[] {
+  const { rocket, windAtRocket } = frame;
+  const status = frame.paused && rocket.status === "flying" ? "paused" : rocket.status;
+  return [
+    `status  ${status}`,
+    `time    ${frame.time.toFixed(1)} s`,
+    `vel     ${rocket.vx.toFixed(1)}, ${rocket.vy.toFixed(1)} m/s`,
+    `angle   ${((rocket.angle * 180) / Math.PI).toFixed(0)}°`,
+    `wind    ${windAtRocket.x.toFixed(1)}, ${windAtRocket.y.toFixed(1)} m/s`,
+    `pilot   ${pilotStatus(frame)}`,
+    `seed    ${frame.world.seed}`,
+  ];
+}
+
+function pilotStatus(frame: Frame): string {
+  if (!frame.autopilot) return "off";
+  if (frame.planning) return "planning flight";
   if (!frame.connected) return "connecting";
   return frame.serverActive ? "steering" : "connected";
+}
+
+/** Greedy word wrap for the current canvas font. */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    const candidate = line === "" ? word : `${line} ${word}`;
+    if (line !== "" && ctx.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line !== "") lines.push(line);
+  return lines;
 }

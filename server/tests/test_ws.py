@@ -16,6 +16,7 @@ PHYSICS = Physics(
     landingMaxAngle=0.28,
     landingMaxVy=5,
     landingMaxVx=3.2,
+    maxFlightTime=90,
 )
 
 SAMPLE_STATE = State(
@@ -39,6 +40,13 @@ def naive_pilot(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_health() -> None:
     with TestClient(app) as client:
         assert client.get('/health').json() == {'ok': True}
+
+
+def test_plan_in_naive_mode_needs_no_agent() -> None:
+    with TestClient(app) as client:
+        assert client.get('/plan').json() == {
+            'strategy': 'The hand-written controller flies this one.'
+        }
 
 
 def test_ws_returns_move() -> None:
