@@ -48,9 +48,16 @@ point the client at a different server.
 
 ## Checks
 
+`make install` installs both sets of dependencies and the pre-commit hooks (via
+[prek](https://github.com/j178/prek)), which run formatting, linting and
+type-checking on every commit. `make help` lists the recipes; `make main` runs
+everything.
+
 ```sh
-pnpm typecheck && pnpm lint && pnpm build
-cd server && uv run ruff check . && uv run ruff format --check . && uv run basedpyright && uv run pytest
+make format      # biome + ruff, with fixes
+make lint        # biome check, ruff, basedpyright
+make typecheck   # tsc
+make test        # pytest
 ```
 
 ## Protocol

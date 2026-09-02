@@ -11,6 +11,10 @@ game is fully playable without the server.
 
 ## Commands
 
+`make help` lists everything; `make main` runs format, lint, typecheck and test for both halves. The
+same recipes back the prek/pre-commit hooks in `.pre-commit-config.yaml` (`make install` sets them
+up), so a commit fails on anything `make lint` or `make typecheck` would reject.
+
 Client (run from the repo root, pnpm):
 
 ```sh
