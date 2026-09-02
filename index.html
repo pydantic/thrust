@@ -57,6 +57,10 @@
       .dialog .result.crashed {
         color: #c00;
       }
+      .dialog .error {
+        color: #c00;
+        max-width: 340px;
+      }
       .dialog .hint {
         color: #555;
       }
@@ -108,6 +112,7 @@
       <form id="dialog-form">
         <h1>THRUST</h1>
         <p id="dialog-result" class="result" hidden></p>
+        <p id="dialog-error" class="error" hidden></p>
         <p class="hint">&uarr; thrust &nbsp; &larr; &rarr; rotate &nbsp; R restart &nbsp; space start</p>
         <label><input type="checkbox" id="ai-control" /> Enable AI control</label>
         <button type="submit">Start new game</button>

@@ -4,7 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from thrust_server.models import State
-from thrust_server.policy import default_policy
+from thrust_server.naive_policy import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ async def health() -> dict[str, bool]:
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
     logger.info("client connected")
+    policy = Policy()
     try:
         while True:
             raw = await websocket.receive_text()
@@ -28,7 +29,7 @@ async def ws(websocket: WebSocket) -> None:
             except ValidationError:
                 logger.warning("invalid state message", exc_info=True)
                 continue
-            move = default_policy(state)
+            move = policy.decide(state)
             await websocket.send_text(move.model_dump_json())
     except WebSocketDisconnect:
         logger.info("client disconnected")

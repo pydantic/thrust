@@ -11,6 +11,11 @@ const WIND_LINE_MIN = 0.3;
 const WIND_LINE_MAX = 2;
 /** Visual speed-up so the drift is easy to see. */
 const WIND_ADVECT = 1.5;
+/**
+ * Time constant (s) for smoothing the flame. The AI's thrust is bang-bang at up
+ * to 30 Hz, so the raw command flickers; the flame shows the average throttle.
+ */
+const FLAME_SMOOTHING_S = 0.3;
 
 export interface Frame {
   world: World;
@@ -32,6 +37,8 @@ export class Renderer {
   private particles: Vec2[] = [];
   private particleSeed = -1;
   private lastTime = 0;
+  /** Smoothed throttle in [0, 1] driving the flame length. */
+  private flame = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -68,7 +75,20 @@ export class Renderer {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-    this.drawWind(frame);
+    if (this.particleSeed !== world.seed) {
+      this.particleSeed = world.seed;
+      this.lastTime = frame.time;
+      this.flame = 0;
+      this.particles = [];
+      for (let i = 0; i < WIND_PARTICLES; i++) this.particles.push(this.spawnParticle(world));
+    }
+    const dt = Math.max(0, Math.min(0.1, frame.time - this.lastTime));
+    this.lastTime = frame.time;
+
+    const throttle = frame.inputs.thrust && frame.rocket.status === "flying" ? 1 : 0;
+    this.flame += (throttle - this.flame) * (1 - Math.exp(-dt / FLAME_SMOOTHING_S));
+
+    this.drawWind(frame, dt);
 
     // Terrain.
     ctx.strokeStyle = "#000";
@@ -115,20 +135,11 @@ export class Renderer {
     this.drawHud(frame);
   }
 
-  private drawWind(frame: Frame): void {
+  private drawWind(frame: Frame, dt: number): void {
     const { ctx } = this;
     const { world, wind, time } = frame;
     const H = world.info.height;
     const W = world.info.width;
-
-    if (this.particleSeed !== world.seed) {
-      this.particleSeed = world.seed;
-      this.lastTime = time;
-      this.particles = [];
-      for (let i = 0; i < WIND_PARTICLES; i++) this.particles.push(this.spawnParticle(world));
-    }
-    const dt = Math.max(0, Math.min(0.1, time - this.lastTime));
-    this.lastTime = time;
 
     ctx.strokeStyle = "#bbb";
     ctx.lineWidth = 1;
@@ -168,15 +179,17 @@ export class Renderer {
 
   private drawRocket(frame: Frame): void {
     const { ctx } = this;
-    const { rocket, world, inputs } = frame;
+    const { rocket, world } = frame;
     const H = world.info.height;
 
-    if (inputs.thrust && rocket.status === "flying") {
-      const flicker = 1 + Math.random() * 0.6;
+    if (this.flame > 0.05) {
+      const flicker = 0.96 + Math.random() * 0.08;
+      const length = ROCKET_HEIGHT * 0.8 * this.flame * flicker;
+      const halfWidth = ROCKET_HALF_BASE * 0.5 * Math.sqrt(this.flame);
       const flame: Vec2[] = [
-        { x: ROCKET_HALF_BASE * 0.5, y: -ROCKET_HEIGHT * 0.4 },
-        { x: 0, y: -ROCKET_HEIGHT * (0.4 + 0.5 * flicker) },
-        { x: -ROCKET_HALF_BASE * 0.5, y: -ROCKET_HEIGHT * 0.4 },
+        { x: halfWidth, y: -ROCKET_HEIGHT * 0.4 },
+        { x: 0, y: -ROCKET_HEIGHT * 0.4 - length },
+        { x: -halfWidth, y: -ROCKET_HEIGHT * 0.4 },
       ];
       ctx.fillStyle = "#fc0";
       this.polygon(

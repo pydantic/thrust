@@ -1,7 +1,7 @@
 import { connectServer, type ServerClient } from "./client";
-import { createDialog } from "./dialog";
+import { createDialog, type ShowOptions } from "./dialog";
 import { attachKeyboard } from "./input";
-import { createRocket, DT, type Inputs, type Rocket, restingY, step } from "./physics";
+import { createRocket, DT, type Inputs, PHYSICS, type Rocket, restingY, step } from "./physics";
 import type { StateMessage } from "./protocol";
 import { mulberry32, randomSeed } from "./random";
 import { type Frame, Renderer } from "./render";
@@ -17,6 +17,8 @@ const MAX_FRAME_S = 0.25;
 const RESIZE_DEBOUNCE_MS = 200;
 /** How long the outcome stays on screen before the new-game dialog appears. */
 const END_DIALOG_DELAY_MS = 1200;
+/** How long to wait for the AI server before giving up and reporting it. */
+const CONNECT_TIMEOUT_MS = 1000;
 
 interface Game {
   world: World;
@@ -56,6 +58,7 @@ function buildState(game: Game, windAtRocket: { x: number; y: number }): StateMe
     launchPad: world.launchPad,
     terrain: world.terrain,
     world: world.info,
+    physics: PHYSICS,
   };
 }
 
@@ -68,23 +71,36 @@ function main(): void {
   let server: ServerClient | null = null;
   let game = spawn();
   let endDialogTimer: number | undefined;
+  let connectTimer: number | undefined;
 
   const dialog = createDialog(document, {
     onStart(aiControl) {
+      window.clearTimeout(connectTimer);
       if (aiControl && server === null) server = connectServer(WS_URL);
       if (!aiControl && server !== null) {
         server.close();
         server = null;
       }
+      if (aiControl) {
+        connectTimer = window.setTimeout(() => {
+          if (server === null || server.connected) return;
+          server.close();
+          server = null;
+          openDialog({
+            error: `Could not connect to the AI server at ${WS_URL} within ${CONNECT_TIMEOUT_MS} ms. Is it running?`,
+          });
+        }, CONNECT_TIMEOUT_MS);
+      }
       game = spawn();
       resize();
     },
   });
-  const openDialog = (result?: "landed" | "crashed"): void => {
+  const openDialog = (options?: ShowOptions): void => {
     window.clearTimeout(endDialogTimer);
     endDialogTimer = undefined;
+    window.clearTimeout(connectTimer);
     keyboard.consumeRespawn();
-    dialog.show(result);
+    dialog.show(options);
   };
 
   const resize = (): void => renderer.resize(game.world.info.width, game.world.info.height);
@@ -121,10 +137,14 @@ function main(): void {
     while (!dialog.open && accumulator >= DT) {
       accumulator -= DT;
       const move = server?.latestMove ?? null;
+      const keys = keyboard.inputs;
+      // Thrust is additive, but a held rotation key takes the rotation axis
+      // away from the AI so the player can steer against it.
+      const manualRotation = keys.left || keys.right;
       inputs = {
-        thrust: keyboard.inputs.thrust || (move?.thrust ?? false),
-        left: keyboard.inputs.left || (move?.left ?? false),
-        right: keyboard.inputs.right || (move?.right ?? false),
+        thrust: keys.thrust || (move?.thrust ?? false),
+        left: manualRotation ? keys.left : (move?.left ?? false),
+        right: manualRotation ? keys.right : (move?.right ?? false),
       };
       const { rocket, world } = game;
       windAtRocket = windAt(game.wind, rocket.x, rocket.y, game.time);
@@ -143,7 +163,10 @@ function main(): void {
       server?.send(buildState(game, windAtRocket));
       if (rocket.status !== "flying" && endDialogTimer === undefined) {
         const outcome = rocket.status;
-        endDialogTimer = window.setTimeout(() => openDialog(outcome), END_DIALOG_DELAY_MS);
+        endDialogTimer = window.setTimeout(
+          () => openDialog({ result: outcome }),
+          END_DIALOG_DELAY_MS,
+        );
       }
     }
 

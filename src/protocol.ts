@@ -29,6 +29,26 @@ export interface WorldInfo {
   gravity: number;
 }
 
+/** Simulation constants, so a controller can model the rocket without a copy. */
+export interface PhysicsConstants {
+  /** Fixed timestep in seconds. */
+  dt: number;
+  /** Engine acceleration along the nose, m/s². */
+  thrustAccel: number;
+  /** Angular acceleration from a rotation key, rad/s². */
+  rotationAccel: number;
+  /** Angular velocity decays by this factor per second. */
+  angularDamping: number;
+  maxAngularVelocity: number;
+  /** Linear drag toward the local wind velocity, 1/s. */
+  windDrag: number;
+  rocketHeight: number;
+  rocketHalfBase: number;
+  landingMaxAngle: number;
+  landingMaxVy: number;
+  landingMaxVx: number;
+}
+
 /** Client -> server. Units are world metres, y up. */
 export interface StateMessage {
   type: "state";
@@ -44,6 +64,7 @@ export interface StateMessage {
   /** Terrain polyline, x increasing. */
   terrain: Array<[number, number]>;
   world: WorldInfo;
+  physics: PhysicsConstants;
 }
 
 /** Server -> client. */

@@ -34,6 +34,28 @@ class WorldInfo(BaseModel):
     gravity: float
 
 
+class Physics(BaseModel):
+    """Simulation constants, sent with every state so nothing has to be kept in sync."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    dt: float
+    """Fixed timestep in seconds."""
+    thrust_accel: float = Field(alias="thrustAccel")
+    """Engine acceleration along the nose, m/s^2."""
+    rotation_accel: float = Field(alias="rotationAccel")
+    """Angular acceleration from a rotation key, rad/s^2."""
+    angular_damping: float = Field(alias="angularDamping")
+    max_angular_velocity: float = Field(alias="maxAngularVelocity")
+    wind_drag: float = Field(alias="windDrag")
+    """Linear drag toward the local wind velocity, 1/s."""
+    rocket_height: float = Field(alias="rocketHeight")
+    rocket_half_base: float = Field(alias="rocketHalfBase")
+    landing_max_angle: float = Field(alias="landingMaxAngle")
+    landing_max_vy: float = Field(alias="landingMaxVy")
+    landing_max_vx: float = Field(alias="landingMaxVx")
+
+
 class State(BaseModel):
     """Client -> server. Units are world metres, y up."""
 
@@ -52,6 +74,7 @@ class State(BaseModel):
     terrain: list[tuple[float, float]]
     """Terrain polyline, x increasing."""
     world: WorldInfo
+    physics: Physics
 
 
 class Move(BaseModel):

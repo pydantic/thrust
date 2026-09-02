@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A canvas rocket-lander game (TypeScript + Vite, no runtime deps) that streams its state each physics
-tick over a WebSocket to a FastAPI server, which replies with a move. The server's
-`default_policy` in `server/thrust_server/policy.py` is a no-op placeholder: the point of the project
-is to replace it with a real control algorithm. The game is fully playable without the server.
+tick over a WebSocket to a FastAPI server, which replies with a move. The controller is `Policy` in
+`server/thrust_server/naive_policy.py` (one instance per connection; it keeps a transit/descent phase). The
+game is fully playable without the server.
 
 ## Commands
 
@@ -35,7 +35,11 @@ uses `httpx2` (Starlette deprecated `httpx` for its TestClient).
 
 Biome only covers the TS side (`server/` is excluded in `biome.json`). There are no JS tests; physics
 and world generation were verified with ad-hoc `tsx` simulations that call `step`/`generateWorld`
-directly, which is the quickest way to check a physics change without a browser.
+directly, which is the quickest way to check a physics change without a browser. The same trick
+verifies the controller end to end: a `.mts` script that runs `step` and, each tick, sends the
+`StateMessage` to a running server over `WebSocket` (built into Node) and applies the reply. The
+simulation constants live in one `PHYSICS` object in `src/physics.ts` and are sent in every state
+message, so the server reads them from `state.physics` rather than keeping copies.
 
 ## Architecture
 
@@ -51,7 +55,8 @@ wire format.
 
 **Ping-pong pacing.** `src/client.ts` sends a state only when no reply is outstanding, so the server
 sees at most one in-flight request and the socket never backs up. A server move older than 500 ms is
-discarded, and the applied inputs are held keys OR the latest server move (`src/main.ts`). The
+discarded. Inputs merge per axis in `src/main.ts`: thrust is keys OR server move, while a held
+rotation key replaces the server's rotation so the player can overrule the AI. The
 client only exists while "Enable AI control" is ticked in the start dialog (`src/dialog.ts`, an HTML
 overlay in `index.html`); unticking it closes the socket. The game loop pauses while the dialog is
 open, and a landed/crashed outcome reopens it after a short delay.

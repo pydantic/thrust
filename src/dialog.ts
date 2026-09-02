@@ -2,10 +2,16 @@ import type { Status } from "./protocol";
 
 const AI_STORAGE_KEY = "thrust.aiControl";
 
+export interface ShowOptions {
+  /** Outcome of the game that just ended. */
+  result?: Exclude<Status, "flying">;
+  /** Problem with the previous start attempt, e.g. the AI server was unreachable. */
+  error?: string;
+}
+
 export interface Dialog {
   readonly open: boolean;
-  /** Show the dialog, optionally with the outcome of the game that just ended. */
-  show(result?: Exclude<Status, "flying">): void;
+  show(options?: ShowOptions): void;
 }
 
 export interface DialogOptions {
@@ -17,6 +23,7 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   const form = must(document.getElementById("dialog-form"), "#dialog-form");
   if (!(form instanceof HTMLFormElement)) throw new Error("#dialog-form is not a form");
   const result = must(document.getElementById("dialog-result"), "#dialog-result");
+  const error = must(document.getElementById("dialog-error"), "#dialog-error");
   const aiCheckbox = must(document.getElementById("ai-control"), "#ai-control");
   if (!(aiCheckbox instanceof HTMLInputElement)) throw new Error("#ai-control is not an input");
 
@@ -42,7 +49,7 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
     get open() {
       return !root.hidden;
     },
-    show(outcome) {
+    show({ result: outcome, error: message } = {}) {
       if (outcome === undefined) {
         result.hidden = true;
       } else {
@@ -50,6 +57,8 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
         result.textContent = outcome === "landed" ? "Landed!" : "Crashed";
         result.className = `result ${outcome}`;
       }
+      error.hidden = message === undefined;
+      error.textContent = message ?? "";
       root.hidden = false;
       const button = form.querySelector("button");
       button?.focus();

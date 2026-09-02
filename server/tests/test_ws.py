@@ -1,7 +1,21 @@
 from fastapi.testclient import TestClient
 
 from thrust_server.main import app
-from thrust_server.models import Move, State
+from thrust_server.models import Move, Physics, State
+
+PHYSICS = Physics(
+    dt=1 / 60,
+    thrustAccel=9,
+    rotationAccel=6,
+    angularDamping=2.5,
+    maxAngularVelocity=3,
+    windDrag=0.15,
+    rocketHeight=4,
+    rocketHalfBase=1.25,
+    landingMaxAngle=0.28,
+    landingMaxVy=5,
+    landingMaxVx=3.2,
+)
 
 SAMPLE_STATE = State(
     tick=1,
@@ -12,6 +26,7 @@ SAMPLE_STATE = State(
     launchPad={"x1": 100, "x2": 110, "y": 20},  # pyright: ignore[reportArgumentType]
     terrain=[(0, 10), (20, 15), (32, 15), (160, 20)],
     world={"width": 160, "height": 100, "gravity": 4},  # pyright: ignore[reportArgumentType]
+    physics=PHYSICS,
 )
 
 
@@ -25,7 +40,7 @@ def test_ws_returns_move() -> None:
     with client.websocket_connect("/ws") as ws:
         ws.send_text(SAMPLE_STATE.model_dump_json())
         move = Move.model_validate_json(ws.receive_text())
-    assert move == Move()
+    assert move.type == "move"
 
 
 def test_ws_ignores_invalid_message() -> None:

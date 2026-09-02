@@ -1,22 +1,39 @@
-import type { Pad, RocketState, Status, Vec2 } from "./protocol";
+import type { Pad, PhysicsConstants, RocketState, Status, Vec2 } from "./protocol";
 import { terrainHeightAt } from "./world";
 
-export const DT = 1 / 60;
+/**
+ * Every tunable the simulation uses. Sent to the server in each state message
+ * so a controller never has to keep its own copy in sync.
+ */
+export const PHYSICS: PhysicsConstants = {
+  dt: 1 / 60,
+  thrustAccel: 9,
+  rotationAccel: 6,
+  angularDamping: 2.5,
+  maxAngularVelocity: 3,
+  windDrag: 0.15,
+  rocketHeight: 4,
+  rocketHalfBase: 1.25,
+  landingMaxAngle: 0.28,
+  landingMaxVy: 5,
+  landingMaxVx: 3.2,
+};
 
-const THRUST_ACCEL = 9;
-const ROTATION_ACCEL = 6;
-const ANGULAR_DAMPING = 2.5;
-const MAX_ANGULAR_VELOCITY = 3;
-/** Linear drag coefficient toward the local wind velocity (1/s). */
-const WIND_DRAG = 0.15;
+export const DT = PHYSICS.dt;
 
-const LANDING_MAX_ANGLE = 0.28;
-const LANDING_MAX_VY = 5;
-const LANDING_MAX_VX = 3.2;
+const THRUST_ACCEL = PHYSICS.thrustAccel;
+const ROTATION_ACCEL = PHYSICS.rotationAccel;
+const ANGULAR_DAMPING = PHYSICS.angularDamping;
+const MAX_ANGULAR_VELOCITY = PHYSICS.maxAngularVelocity;
+const WIND_DRAG = PHYSICS.windDrag;
+
+const LANDING_MAX_ANGLE = PHYSICS.landingMaxAngle;
+const LANDING_MAX_VY = PHYSICS.landingMaxVy;
+const LANDING_MAX_VX = PHYSICS.landingMaxVx;
 
 /** Rocket outline in body space: tip up, base at the bottom. Metres. */
-export const ROCKET_HEIGHT = 4;
-export const ROCKET_HALF_BASE = 1.25;
+export const ROCKET_HEIGHT = PHYSICS.rocketHeight;
+export const ROCKET_HALF_BASE = PHYSICS.rocketHalfBase;
 export const ROCKET_VERTICES: readonly Vec2[] = [
   { x: 0, y: ROCKET_HEIGHT * 0.6 },
   { x: ROCKET_HALF_BASE, y: -ROCKET_HEIGHT * 0.4 },
