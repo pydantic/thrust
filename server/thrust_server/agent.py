@@ -89,6 +89,9 @@ These names are predefined. Do not define, import or shadow them:
   has a budget of 30 s of sandbox compute (waiting inside `update` or `ai` is free), after
   which the script is killed. So call `ai()` only where a pause is harmless: on the launch
   pad before the first `update`, or while hovering high above any terrain.
+- After the flight you get a telemetry table (position, velocity, wind and your inputs
+  every 0.5 s, denser at the end) and a diagnosis of how it ended: use the numbers to
+  tune gains, altitudes and speeds rather than guessing.
 - `print()` output is collected and shown to you after the flight. Print a compact status
   line about once a second (every 60 ticks) and at phase changes; it is your only telemetry.
 - An uncaught exception ends the script; the rocket then drifts uncontrolled. Guard
@@ -135,7 +138,7 @@ apply left/right with a dead band, rather than flipping the inputs every tick.
 Take off from the launch pad, fly to the landing pad and land on it as quickly as you can.
 Time to touchdown is the score, but a crash scores nothing.
 
-You should aim to get significantly faster each time you fly, better to crash and learn than
+You must iterate aggressively to find a faster flight path! Better to crash and learn than
 be conservative.
 """
 

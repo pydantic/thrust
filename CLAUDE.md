@@ -67,16 +67,19 @@ most every 100 ms (`HUD_INTERVAL_MS` in `src/render.ts`).
 Inputs merge per axis in `src/main.ts`: thrust is keys OR server move, while a held
 rotation key replaces the server's rotation so the player can overrule the auto-pilot. The
 client only exists while "Enable auto-pilot" is ticked in the start dialog (`src/dialog.ts`, an HTML
-overlay in `index.html`); unticking it closes the socket. The dialog is minimal (the two checkboxes
+overlay in `index.html`); unticking it closes the socket. The dialog is minimal (the auto-pilot checkbox
 plus "Start" for the map already shown) until the URL carries `?seed=N`, which `show()` checks each time.
-Auto-replay is never persisted; auto-pilot is. The game loop pauses while the dialog is
+The auto-replay checkbox lives outside the dialog (`.corner`, bottom right) and is read by `src/main.ts`
+when a flight ends, so it can be changed mid-run; it is never persisted, auto-pilot is. The game loop pauses while the dialog is
 open, and a landed/crashed/timeout/aborted outcome reopens it after a short delay, or respawns the same seed
 when auto-replay is ticked. The 90 s flight cap (`PHYSICS.maxFlightTime`) is enforced in `src/main.ts`
 where game time is counted, not in `step`. The socket survives restarts, so
 the server side flies one flight per connection: `fly_script(pool, plan, ask_ai, first_state=,
 next_state=, send_reply=)` in `autopilot.py` runs the planned script in the sandbox, where the script's
 `update(move)` is simply "send the move, await the next state" (`GameLink`); it returns a `FlightResult`
-whose `report()` the websocket handler records in the process-wide `PilotMemory`. Every state gets exactly
+whose `report()` the websocket handler records in the process-wide `PilotMemory`. `GameLink` keeps a
+`Sample` per tick (state plus the move sent back); `telemetry.py` renders them into the sampled table and
+the ending diagnosis (rocket corners vs terrain, walls and landing limits) that go into the report. Every state gets exactly
 one reply: the script answers all but the last, and `fly_script` answers a terminal state with an idle
 move or a dead script's state with `{type: "abort"}`, which the client turns into status `aborted`.
 Logfire (`logfire.configure` in `main.py`,

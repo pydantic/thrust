@@ -20,8 +20,6 @@ export interface Dialog {
 
 export interface StartRequest {
   autopilot: boolean;
-  /** Replay the same seed automatically when a flight ends, instead of showing the dialog. */
-  autoReplay: boolean;
   /** Seed to replay; undefined means pick a random one. */
   seed: number | undefined;
 }
@@ -37,15 +35,12 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   const result = must(document.getElementById("dialog-result"), "#dialog-result");
   const error = must(document.getElementById("dialog-error"), "#dialog-error");
   const autopilotCheckbox = must(document.getElementById("autopilot"), "#autopilot");
-  const autoReplayCheckbox = must(document.getElementById("autoreplay"), "#autoreplay");
   const seedLabel = must(document.getElementById("seed-label"), "#seed-label");
   const seedInput = must(document.getElementById("seed"), "#seed");
   const newButton = must(document.getElementById("start-new"), "#start-new");
   const replayButton = must(document.getElementById("start-replay"), "#start-replay");
   if (!(autopilotCheckbox instanceof HTMLInputElement))
     throw new Error("#autopilot is not an input");
-  if (!(autoReplayCheckbox instanceof HTMLInputElement))
-    throw new Error("#autoreplay is not an input");
   if (!(seedInput instanceof HTMLInputElement)) throw new Error("#seed is not an input");
   if (!(newButton instanceof HTMLButtonElement)) throw new Error("#start-new is not a button");
   if (!(replayButton instanceof HTMLButtonElement)) {
@@ -53,12 +48,10 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   }
 
   autopilotCheckbox.checked = loadPreference(AUTOPILOT_STORAGE_KEY);
-  // Auto-replay is deliberate each time: always shown, never remembered.
-  autoReplayCheckbox.checked = false;
 
   /**
-   * Until a seed is pinned in the URL the dialog is minimal: the two checkboxes
-   * and a Start button that runs the map already on screen.
+   * Until a seed is pinned in the URL the dialog is minimal: the auto-pilot
+   * checkbox and a Start button that runs the map already on screen.
    */
   let pinned = false;
   /** Seed of the map behind the dialog, which Start runs when nothing is pinned. */
@@ -79,11 +72,7 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
     }
     root.hidden = true;
     savePreference(AUTOPILOT_STORAGE_KEY, autopilotCheckbox.checked);
-    options.onStart({
-      autopilot: autopilotCheckbox.checked,
-      autoReplay: autoReplayCheckbox.checked,
-      seed,
-    });
+    options.onStart({ autopilot: autopilotCheckbox.checked, seed });
   });
 
   // Space starts a new game with the checkbox as-is, unless a control that
@@ -91,8 +80,7 @@ export function createDialog(document: Document, options: DialogOptions): Dialog
   // handler to ignore this press.
   document.addEventListener("keydown", (event) => {
     if (root.hidden || event.code !== "Space") return;
-    if (event.target === autopilotCheckbox || event.target === autoReplayCheckbox) return;
-    if (event.target === seedInput) return;
+    if (event.target instanceof HTMLInputElement) return;
     if (event.target === replayButton) return;
     event.preventDefault();
     form.requestSubmit(newButton);

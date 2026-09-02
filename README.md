@@ -13,10 +13,16 @@ script for each flight and runs it in a sandbox; see [Autopilot](#autopilot).
 - Left / right arrows: rotate
 - R or space: open the "New game" dialog; space in the dialog starts a new game
 
-On a fresh load without `?seed=N` the dialog is minimal: the two checkboxes and a
-"Start" button that flies the map already on screen. Once a seed is pinned in the
+On a fresh load without `?seed=N` the dialog is minimal: the auto-pilot checkbox and
+a "Start" button that flies the map already on screen. Once a seed is pinned in the
 URL (which happens as soon as a game starts) the dialog also offers the seed field,
 "Replay" and "New game".
+
+Under the big clock, the last eight flights of the current seed are listed, most
+recent first (failed ones say how they failed); the last twenty are kept in
+localStorage per seed. Their paths are drawn as light red dashes, fading a little
+with each newer flight, each spanning 0.1 s of flight with a 0.1 s gap,
+so dash length shows the speed; the current flight's path is drawn as it goes.
 
 The dialog reports how long the last flight took, which is the number to beat,
 and shows its seed. "Replay" (shown once a seed is in the URL) reruns whatever seed
@@ -26,10 +32,11 @@ of the current game is kept in the URL as `?seed=N`, so reloading or sharing
 the link brings up the same game.
 
 A flight that is still going after 90 s ends as "Out of time", which counts as a
-failure. With "Enable auto-replay" ticked (always shown, off by default and not
-remembered), a finished flight restarts the same map after a moment instead of
-opening the dialog, so the auto-pilot can iterate on one seed hands-free; R brings
-the dialog back.
+failure. "Restart automatically" sits in the bottom-right corner of the screen, off by
+default and not remembered. While it is ticked, a finished flight restarts the same
+map after a moment instead of opening the dialog, so the auto-pilot can iterate on one
+seed hands-free; untick it mid-run to get the dialog at the end of that flight, or
+press R.
 
 The dialog has an "Enable auto-pilot" checkbox. When ticked the game connects to
 the server and applies its moves, but you can still fly: the up arrow adds
@@ -143,8 +150,12 @@ The TypeScript types are in `src/protocol.ts` and the pydantic models in
 that writes a complete Python script for one flight. Its instructions describe the
 game, the exact physics, the goal and the sandbox API. The agent holds one conversation
 across all flights: the first message asks for a script, each script is submitted
-through a `start_flight` tool call, and the flight's outcome (how it ended, any
-traceback, the last lines printed) goes back as that tool call's result. `GET /plan`
+through a `start_flight` tool call, and the flight's outcome goes back as that tool
+call's result: how it ended, a diagnosis (peak altitude, closest approach to the pad,
+and what touched what or which limit was broken, worked out from the rocket geometry
+and terrain in `server/thrust_server/telemetry.py`), a telemetry table of position,
+velocity, wind and inputs every 0.5 s (every 0.1 s over the last 2 s), any traceback,
+and the last lines printed. `GET /plan`
 writes the script for the next flight and the following websocket connection flies
 it, so a session is a loop of plan, fly, report, with the opening message and the
 last six script/result pairs kept in the history. The conversation and the flight

@@ -5,6 +5,7 @@ import { createRocket, DT, type Inputs, PHYSICS, type Rocket, restingY, step } f
 import { isPlanResponse, type StateMessage } from "./protocol";
 import { mulberry32, randomSeed } from "./random";
 import { type Frame, Renderer } from "./render";
+import { type FlightTime, loadTimes, recordTime, TRAIL_INTERVAL_S } from "./times";
 import { generateWind, type WindField, windAt } from "./wind";
 import { generateWorld, type World, worldWidthFor } from "./world";
 
@@ -24,6 +25,7 @@ const MAX_FRAME_S = 0.25;
 const RESIZE_DEBOUNCE_MS = 200;
 /** How long the outcome stays on screen before the new-game dialog appears. */
 const END_DIALOG_DELAY_MS = 1200;
+const TRAIL_EVERY_TICKS = Math.round(TRAIL_INTERVAL_S / DT);
 /** How long to wait for the auto-pilot server before giving up and reporting it. */
 const CONNECT_TIMEOUT_MS = 1000;
 
@@ -78,10 +80,17 @@ function main(): void {
   let game = spawn(seedFromUrl());
   let endTimer: number | undefined;
   let autopilot = false;
-  let autoReplay = false;
+  // Lives outside the dialog so it can be unticked mid-run; read when the flight ends.
+  const autoReplayBox = document.getElementById("autoreplay");
+  if (!(autoReplayBox instanceof HTMLInputElement)) throw new Error("#autoreplay not found");
+  autoReplayBox.checked = false; // deliberate each time, never remembered
+  autoReplayBox.addEventListener("change", () => autoReplayBox.blur());
   /** Waiting for the plan and the connection; physics is held meanwhile. */
   let planning = false;
   let strategy: string | null = null;
+  let recentTimes: FlightTime[] = loadTimes(game.world.seed);
+  /** This flight's path so far, sampled for the trail drawn on later flights. */
+  let trail: Array<[number, number]> = [];
   /** Bumped on every start so a plan that arrives late is thrown away. */
   let flightId = 0;
 
@@ -103,6 +112,8 @@ function main(): void {
     game = spawn(seed);
     resize();
     writeSeedToUrl(game.world.seed);
+    recentTimes = loadTimes(game.world.seed);
+    trail = [];
     if (!autopilot) return;
     planning = true;
     try {
@@ -121,9 +132,8 @@ function main(): void {
   };
 
   const dialog = createDialog(document, {
-    onStart({ autopilot: wanted, autoReplay: replayWanted, seed }) {
+    onStart({ autopilot: wanted, seed }) {
       autopilot = wanted;
-      autoReplay = replayWanted;
       void beginFlight(seed);
     },
   });
@@ -197,6 +207,9 @@ function main(): void {
         world.info.height,
       );
       game.tick += 1;
+      if (game.tick % TRAIL_EVERY_TICKS === 0 || rocket.status !== "flying") {
+        trail.push([Math.round(rocket.x * 10) / 10, Math.round(rocket.y * 10) / 10]);
+      }
       // Game time is the score, so it stops the moment the flight ends.
       if (rocket.status === "flying") {
         game.time += DT;
@@ -208,12 +221,13 @@ function main(): void {
       if (rocket.status !== "flying" && endTimer === undefined) {
         // One flight per connection: the server has seen the outcome, so
         // after a moment drop the socket and either replay or ask what next.
+        recentTimes = recordTime(world.seed, { time: game.time, status: rocket.status, trail });
         const summary: ShowOptions = { result: rocket.status, time: game.time, seed: world.seed };
         const reason = server?.abortReason;
         if (reason != null) summary.error = `The auto-pilot script failed: ${reason}`;
         endTimer = window.setTimeout(() => {
           disconnect();
-          if (autoReplay) void beginFlight(game.world.seed);
+          if (autoReplayBox.checked) void beginFlight(game.world.seed);
           else openDialog(summary);
         }, END_DIALOG_DELAY_MS);
       }
@@ -233,6 +247,8 @@ function main(): void {
       connected: server?.connected ?? false,
       serverActive: move !== null && (move.thrust || move.left || move.right),
       strategy,
+      recentTimes,
+      trail,
     };
     renderer.draw(view);
     requestAnimationFrame(frame);

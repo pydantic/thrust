@@ -30,6 +30,7 @@ from pydantic_monty import (
 
 from thrust_server import models
 from thrust_server.models import State
+from thrust_server.telemetry import Sample, diagnose, render
 
 logger = logging.getLogger(__name__)
 
@@ -220,10 +221,21 @@ class RunReport(BaseModel):
     """Traceback from the sandbox, if the script raised."""
     output: str = ''
     """Tail of what the script printed."""
+    diagnosis: str = ''
+    """Why it ended that way: peak altitude, closest approach, what touched what."""
+    telemetry: str = ''
+    """Sampled table of position, velocity, wind and inputs over the flight."""
 
     def feedback(self) -> str:
         """The `start_flight` tool result for this flight, so the agent can improve."""
         parts = [self.outcome]
+        if self.diagnosis:
+            parts.append(self.diagnosis)
+        if self.telemetry:
+            parts.append(
+                'Telemetry, every 0.5 s and every 0.1 s over the last 2 s:'
+                f'\n```\n{self.telemetry}\n```'
+            )
         if self.error:
             parts.append(f'It raised this error:\n```\n{self.error}\n```')
         if self.output:
@@ -319,9 +331,18 @@ class FlightResult:
     output: str
     exited_early: bool
     """The script returned while the rocket was still flying and the game still there."""
+    samples: list[Sample]
+    """Every state the game sent with the move it got back; the last one is unanswered."""
 
     def report(self, code: str) -> RunReport:
-        return RunReport(code=code, outcome=self.describe(), error=self.error, output=self.output)
+        return RunReport(
+            code=code,
+            outcome=self.describe(),
+            error=self.error,
+            output=self.output,
+            diagnosis=diagnose(self.samples),
+            telemetry=render(self.samples),
+        )
 
     def describe(self) -> str:
         state = self.last_state
@@ -375,6 +396,7 @@ class GameLink:
         self.over = False
         self.game_gone = False
         self.stray_calls = 0
+        self.samples: list[Sample] = []
         self.run: asyncio.Future[object] | None = None
         self._next_state = next_state
         self._send_reply = send_reply
@@ -388,7 +410,9 @@ class GameLink:
         if not isinstance(move, Move):
             msg = f'update() expects a Move, got {type(move).__name__}'
             raise TypeError(msg)
-        await self._send_reply(models.Move(thrust=move.thrust, left=move.left, right=move.right))
+        reply = models.Move(thrust=move.thrust, left=move.left, right=move.right)
+        self.samples.append(Sample(self.state, reply))
+        await self._send_reply(reply)
         try:
             self.state = await self._next_state()
         except Exception:  # noqa: BLE001 - whatever failed, the game is no longer there
@@ -469,6 +493,7 @@ async def fly_script(  # noqa: PLR0913 - the flight's whole interface
         error=error,
         output=prints.tail(),
         exited_early=exited_early,
+        samples=[*link.samples, Sample(link.state, None)],
     )
 
 

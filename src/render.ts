@@ -1,6 +1,7 @@
 import type { Inputs, Rocket } from "./physics";
 import { ROCKET_HALF_BASE, ROCKET_HEIGHT, ROCKET_VERTICES, toWorld } from "./physics";
 import type { Status, Vec2 } from "./protocol";
+import type { FlightTime } from "./times";
 import { type WindField, windAt } from "./wind";
 import { terrainHeightAt, type World } from "./world";
 
@@ -33,6 +34,10 @@ export interface Frame {
   serverActive: boolean;
   /** The auto-pilot script's own description of its plan, shown under the HUD. */
   strategy: string | null;
+  /** Finished flights of this seed, most recent first, listed under the clock. */
+  recentTimes: FlightTime[];
+  /** The current flight's path so far, sampled like the trails. */
+  trail: ReadonlyArray<readonly [number, number]>;
 }
 
 const OVERLAY_TEXT: Record<Status, string> = {
@@ -42,6 +47,13 @@ const OVERLAY_TEXT: Record<Status, string> = {
   timeout: "Out of time",
   aborted: "Script failed",
 };
+
+const TRAIL_COLOUR = "#e88";
+const TRAIL_MAX_ALPHA = 0.7;
+const TRAIL_MIN_ALPHA = 0.15;
+const TRAIL_FADE_STEP = 0.04;
+/** How many of the kept flights are listed under the clock. */
+const TIMES_LISTED = 8;
 
 /** The HUD text is refreshed at most this often so the numbers are readable. */
 const HUD_INTERVAL_MS = 100;
@@ -111,6 +123,7 @@ export class Renderer {
     this.flame += (throttle - this.flame) * (1 - Math.exp(-dt / FLAME_SMOOTHING_S));
 
     this.drawWind(frame, dt);
+    this.drawTrails(frame);
 
     // Terrain.
     ctx.strokeStyle = "#000";
@@ -167,7 +180,51 @@ export class Renderer {
     ctx.textBaseline = "top";
     const right = this.offsetX + frame.world.info.width * this.scale - 16;
     ctx.fillText(`${frame.time.toFixed(1)} s`, right, this.offsetY + 12);
+    // Earlier flights of this seed, most recent at the top.
+    ctx.font = "16px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = "#000";
+    frame.recentTimes.slice(0, TIMES_LISTED).forEach((flight, i) => {
+      const label =
+        flight.status === "landed"
+          ? `${flight.time.toFixed(1)} s`
+          : `${flight.time.toFixed(1)} s ${flight.status}`;
+      ctx.fillText(label, right, this.offsetY + 62 + i * 20);
+    });
     ctx.textAlign = "start";
+  }
+
+  /**
+   * Flight paths as light red dashes: each dash spans one trail interval and the
+   * next interval is a gap, so dash length shows speed. Earlier flights of this seed
+   * are drawn fainter; the current flight is drawn as it goes.
+   */
+  private drawTrails(frame: Frame): void {
+    const { ctx } = this;
+    ctx.strokeStyle = TRAIL_COLOUR;
+    ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
+    frame.recentTimes.forEach((flight, i) => {
+      // Older flights fade slowly: a step per flight down to a floor, never gone.
+      ctx.globalAlpha = Math.max(TRAIL_MIN_ALPHA, TRAIL_MAX_ALPHA - i * TRAIL_FADE_STEP);
+      this.dashes(flight.trail, frame.world.info.height);
+    });
+    ctx.globalAlpha = 1;
+    this.dashes(frame.trail, frame.world.info.height);
+  }
+
+  private dashes(trail: ReadonlyArray<readonly [number, number]>, worldHeight: number): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    for (let j = 0; j + 1 < trail.length; j += 2) {
+      const from = trail[j];
+      const to = trail[j + 1];
+      if (from === undefined || to === undefined) break;
+      const a = this.toScreen(from[0], from[1], worldHeight);
+      const b = this.toScreen(to[0], to[1], worldHeight);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
   }
 
   private drawWind(frame: Frame, dt: number): void {

@@ -63,10 +63,19 @@
         color: #c00;
         max-width: 340px;
       }
+      /* Live during a run, so it can be unticked before the flight ends. */
+      .corner {
+        position: fixed;
+        right: 16px;
+        bottom: 12px;
+        font: 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #000;
+      }
       .dialog .hint {
         color: #555;
       }
-      .dialog label {
+      .dialog label,
+      .corner {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -76,7 +85,8 @@
       .dialog label[hidden] {
         display: none;
       }
-      .dialog input[type="checkbox"] {
+      .dialog input[type="checkbox"],
+      .corner input[type="checkbox"] {
         appearance: none;
         width: 16px;
         height: 16px;
@@ -86,14 +96,15 @@
         cursor: pointer;
         position: relative;
       }
-      .dialog input[type="checkbox"]:checked::after {
+      .dialog input[type="checkbox"]:checked::after,
+      .corner input[type="checkbox"]:checked::after {
         content: "";
         position: absolute;
         inset: 2px;
         background: #000;
       }
       .dialog input[type="checkbox"]:focus-visible,
-      .dialog button:focus-visible {
+      .corner input[type="checkbox"]:focus-visible {
         outline: 2px dashed #000;
         outline-offset: 2px;
       }
@@ -117,6 +128,10 @@
         padding: 8px 14px;
         cursor: pointer;
       }
+      .dialog button:focus,
+      .dialog button:focus-visible {
+        outline: none;
+      }
       .dialog button:hover {
         background: #000;
         color: #fff;
@@ -139,7 +154,6 @@
         <p id="dialog-error" class="error" hidden></p>
         <p class="hint">&uarr; thrust &nbsp; &larr; &rarr; rotate &nbsp; R restart &nbsp; space start</p>
         <label><input type="checkbox" id="autopilot" /> Enable auto-pilot</label>
-        <label><input type="checkbox" id="autoreplay" /> Enable auto-replay</label>
         <label class="seed" id="seed-label">Seed <input type="text" id="seed" inputmode="numeric" autocomplete="off" /></label>
         <div class="buttons">
           <button type="submit" id="start-new">New game</button>
@@ -147,6 +161,7 @@
         </div>
       </form>
     </div>
+    <label class="corner"><input type="checkbox" id="autoreplay" /> Restart automatically</label>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
