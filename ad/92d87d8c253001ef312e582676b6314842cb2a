@@ -1,0 +1,41 @@
+src/render.ts
+  s_b20fbaf61e249b::t_9ac6c3ad77f151 18,186
+  s_b20fbaf61e249b::t_fcbea0d507fd3b 14-17,40-41,78-91,138,182,185,187-188,190-192
+server/thrust_server/naive_policy.py
+  s_b20fbaf61e249b::t_d273141656e6e4 81-151
+src/dialog.ts
+  s_b20fbaf61e249b::t_491b86e96df781 5-11,14,26,52,60-61
+server/tests/test_policy.py
+  s_b20fbaf61e249b::t_590fb2ac061843 21-30
+src/main.ts
+  ai_agent 4
+  s_b20fbaf61e249b::t_20b5bc2e7d889a 140-143,145-147
+  s_b20fbaf61e249b::t_491b86e96df781 2,20-21,61,74,78,84-93,98,101,103,166-169
+README.md
+  s_b20fbaf61e249b::t_491b86e96df781 20
+  s_b20fbaf61e249b::t_6b5b70f480057b 5-6,79-83,85-91
+  s_b20fbaf61e249b::t_20b5bc2e7d889a 16-19
+index.html
+  s_b20fbaf61e249b::t_491b86e96df781 60-63,115
+CLAUDE.md
+  s_b20fbaf61e249b::t_20b5bc2e7d889a 58-59
+  s_b20fbaf61e249b::t_6b5b70f480057b 8,10,38-40
+server/pyproject.toml
+  s_b20fbaf61e249b::t_590fb2ac061843 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ad92d87d8c253001ef312e582676b6314842cb2a",
+  "prompts": {},
+  "sessions": {
+    "s_b20fbaf61e249b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8c690e7-6845-481c-bef8-ef47672e87fc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
