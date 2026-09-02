@@ -1,4 +1,5 @@
-import { connectServer } from "./client";
+import { connectServer, type ServerClient } from "./client";
+import { createDialog } from "./dialog";
 import { attachKeyboard } from "./input";
 import { createRocket, DT, type Inputs, type Rocket, restingY, step } from "./physics";
 import type { StateMessage } from "./protocol";
@@ -14,6 +15,8 @@ const WS_URL: string =
 
 const MAX_FRAME_S = 0.25;
 const RESIZE_DEBOUNCE_MS = 200;
+/** How long the outcome stays on screen before the new-game dialog appears. */
+const END_DIALOG_DELAY_MS = 1200;
 
 interface Game {
   world: World;
@@ -62,8 +65,27 @@ function main(): void {
 
   const renderer = new Renderer(canvas);
   const keyboard = attachKeyboard(window);
-  const server = connectServer(WS_URL);
+  let server: ServerClient | null = null;
   let game = spawn();
+  let endDialogTimer: number | undefined;
+
+  const dialog = createDialog(document, {
+    onStart(aiControl) {
+      if (aiControl && server === null) server = connectServer(WS_URL);
+      if (!aiControl && server !== null) {
+        server.close();
+        server = null;
+      }
+      game = spawn();
+      resize();
+    },
+  });
+  const openDialog = (result?: "landed" | "crashed"): void => {
+    window.clearTimeout(endDialogTimer);
+    endDialogTimer = undefined;
+    keyboard.consumeRespawn();
+    dialog.show(result);
+  };
 
   const resize = (): void => renderer.resize(game.world.info.width, game.world.info.height);
   // The world is sized to the viewport, so a resize means a new world.
@@ -87,14 +109,18 @@ function main(): void {
     accumulator += Math.min(MAX_FRAME_S, (now - last) / 1000);
     last = now;
 
-    if (keyboard.consumeRespawn()) {
-      game = spawn();
+    if (dialog.open) {
+      // Paused: keep drawing the last state behind the dialog.
       accumulator = 0;
+      keyboard.consumeRespawn();
+    } else if (keyboard.consumeRespawn()) {
+      accumulator = 0;
+      openDialog();
     }
 
-    while (accumulator >= DT) {
+    while (!dialog.open && accumulator >= DT) {
       accumulator -= DT;
-      const move = server.latestMove;
+      const move = server?.latestMove ?? null;
       inputs = {
         thrust: keyboard.inputs.thrust || (move?.thrust ?? false),
         left: keyboard.inputs.left || (move?.left ?? false),
@@ -114,10 +140,14 @@ function main(): void {
       );
       game.tick += 1;
       game.time += DT;
-      server.send(buildState(game, windAtRocket));
+      server?.send(buildState(game, windAtRocket));
+      if (rocket.status !== "flying" && endDialogTimer === undefined) {
+        const outcome = rocket.status;
+        endDialogTimer = window.setTimeout(() => openDialog(outcome), END_DIALOG_DELAY_MS);
+      }
     }
 
-    const move = server.latestMove;
+    const move = server?.latestMove ?? null;
     const view: Frame = {
       world: game.world,
       wind: game.wind,
@@ -125,13 +155,15 @@ function main(): void {
       inputs,
       time: game.time,
       windAtRocket,
-      connected: server.connected,
+      aiControl: server !== null,
+      connected: server?.connected ?? false,
       serverActive: move !== null && (move.thrust || move.left || move.right),
     };
     renderer.draw(view);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+  dialog.show();
 }
 
 main();

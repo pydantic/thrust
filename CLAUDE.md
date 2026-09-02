@@ -51,7 +51,10 @@ wire format.
 
 **Ping-pong pacing.** `src/client.ts` sends a state only when no reply is outstanding, so the server
 sees at most one in-flight request and the socket never backs up. A server move older than 500 ms is
-discarded, and the applied inputs are held keys OR the latest server move (`src/main.ts`).
+discarded, and the applied inputs are held keys OR the latest server move (`src/main.ts`). The
+client only exists while "Enable AI control" is ticked in the start dialog (`src/dialog.ts`, an HTML
+overlay in `index.html`); unticking it closes the socket. The game loop pauses while the dialog is
+open, and a landed/crashed outcome reopens it after a short delay.
 
 **Physics (`src/physics.ts`)** is a hand-rolled rigid body at a fixed 60 Hz (`DT`), not Box2D.
 Wind is linear drag toward the local wind velocity. Ground contact tests the three triangle

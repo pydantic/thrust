@@ -10,9 +10,9 @@ const MAX_ANGULAR_VELOCITY = 3;
 /** Linear drag coefficient toward the local wind velocity (1/s). */
 const WIND_DRAG = 0.15;
 
-const LANDING_MAX_ANGLE = 0.2;
-const LANDING_MAX_VY = 4;
-const LANDING_MAX_VX = 2.5;
+const LANDING_MAX_ANGLE = 0.28;
+const LANDING_MAX_VY = 5;
+const LANDING_MAX_VX = 3.2;
 
 /** Rocket outline in body space: tip up, base at the bottom. Metres. */
 export const ROCKET_HEIGHT = 4;

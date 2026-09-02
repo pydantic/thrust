@@ -11,10 +11,12 @@ real control algorithm.
 
 - Up arrow: thrust
 - Left / right arrows: rotate
-- R or space: respawn with a new world and wind
+- R or space: open the "Start new game" dialog; space in the dialog starts the game
 
-Inputs are merged: the applied move is the union of held keys and the latest
-server move.
+The dialog has an "Enable AI control" checkbox. When ticked the game connects to
+the server and the applied move is the union of held keys and the latest server
+move; when unticked no connection is made and only the keyboard steers. The
+choice is remembered in localStorage.
 
 ## Running
 
@@ -33,8 +35,8 @@ uv sync
 uv run uvicorn thrust_server.main:app --reload --port 8000
 ```
 
-The game works without the server. Set `VITE_WS_URL` to point the client at a
-different server.
+The server is only contacted when AI control is enabled. Set `VITE_WS_URL` to
+point the client at a different server.
 
 ## Checks
 
@@ -76,5 +78,5 @@ The policy lives in `server/thrust_server/policy.py`; the TypeScript types are i
 
 Fixed 60 Hz timestep. Gravity 4 m/s², thrust 9 m/s² along the nose, rotation
 6 rad/s² with damping. Wind applies a linear drag toward the local wind velocity.
-A landing counts if both base corners are on the pad, the rocket is within 0.2 rad
-of upright, and the vertical and horizontal speeds are under 4 and 2.5 m/s.
+A landing counts if both base corners are on the pad, the rocket is within 0.28 rad
+of upright, and the vertical and horizontal speeds are under 5 and 3.2 m/s.

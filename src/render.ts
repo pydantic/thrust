@@ -19,6 +19,7 @@ export interface Frame {
   inputs: Inputs;
   time: number;
   windAtRocket: Vec2;
+  aiControl: boolean;
   connected: boolean;
   serverActive: boolean;
 }
@@ -285,7 +286,7 @@ export class Renderer {
       `vel     ${rocket.vx.toFixed(1)}, ${rocket.vy.toFixed(1)} m/s`,
       `angle   ${((rocket.angle * 180) / Math.PI).toFixed(0)}°`,
       `wind    ${windAtRocket.x.toFixed(1)}, ${windAtRocket.y.toFixed(1)} m/s`,
-      `ws      ${frame.connected ? (frame.serverActive ? "connected, steering" : "connected") : "disconnected"}`,
+      `ai      ${aiStatus(frame)}`,
       `seed    ${frame.world.seed}`,
     ];
     ctx.fillStyle = "#000";
@@ -303,10 +304,13 @@ export class Renderer {
       const cy = this.offsetY + (frame.world.info.height * this.scale) / 3;
       ctx.fillStyle = rocket.status === "landed" ? "#0a0" : "#c00";
       ctx.fillText(msg, cx, cy);
-      ctx.font = "16px ui-monospace, SFMono-Regular, Menlo, monospace";
-      ctx.fillStyle = "#000";
-      ctx.fillText("press R or space to respawn", cx, cy + 44);
       ctx.textAlign = "start";
     }
   }
+}
+
+function aiStatus(frame: Frame): string {
+  if (!frame.aiControl) return "off";
+  if (!frame.connected) return "connecting";
+  return frame.serverActive ? "steering" : "connected";
 }

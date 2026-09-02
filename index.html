@@ -17,10 +17,102 @@
         width: 100vw;
         height: 100vh;
       }
+      .dialog {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.6);
+        font: 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #000;
+      }
+      .dialog[hidden] {
+        display: none;
+      }
+      .dialog form {
+        background: #fff;
+        border: 2px solid #000;
+        padding: 20px 24px;
+        min-width: 280px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .dialog h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: bold;
+        letter-spacing: 0.1em;
+      }
+      .dialog p {
+        margin: 0;
+      }
+      .dialog .result {
+        font-weight: bold;
+      }
+      .dialog .result.landed {
+        color: #0a0;
+      }
+      .dialog .result.crashed {
+        color: #c00;
+      }
+      .dialog .hint {
+        color: #555;
+      }
+      .dialog label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .dialog input[type="checkbox"] {
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        border: 2px solid #000;
+        background: #fff;
+        cursor: pointer;
+        position: relative;
+      }
+      .dialog input[type="checkbox"]:checked::after {
+        content: "";
+        position: absolute;
+        inset: 2px;
+        background: #000;
+      }
+      .dialog input[type="checkbox"]:focus-visible,
+      .dialog button:focus-visible {
+        outline: 2px dashed #000;
+        outline-offset: 2px;
+      }
+      .dialog button {
+        font: inherit;
+        background: #fff;
+        color: #000;
+        border: 2px solid #000;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      .dialog button:hover {
+        background: #000;
+        color: #fff;
+      }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
+    <div id="dialog" class="dialog" hidden>
+      <form id="dialog-form">
+        <h1>THRUST</h1>
+        <p id="dialog-result" class="result" hidden></p>
+        <p class="hint">&uarr; thrust &nbsp; &larr; &rarr; rotate &nbsp; R restart &nbsp; space start</p>
+        <label><input type="checkbox" id="ai-control" /> Enable AI control</label>
+        <button type="submit">Start new game</button>
+      </form>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

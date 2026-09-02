@@ -11,6 +11,8 @@ export interface ServerClient {
   readonly latestMove: MoveMessage | null;
   /** Sends the state if the socket is open and no reply is outstanding. */
   send(state: StateMessage): void;
+  /** Close the socket and stop reconnecting. */
+  close(): void;
 }
 
 export function connectServer(url: string): ServerClient {
@@ -20,8 +22,11 @@ export function connectServer(url: string): ServerClient {
   let latestMove: MoveMessage | null = null;
   let latestMoveAt = 0;
   let backoff = MIN_BACKOFF_MS;
+  let closed = false;
+  let reconnectTimer: number | undefined;
 
   const open = (): void => {
+    if (closed) return;
     const ws = new WebSocket(url);
     socket = ws;
     ws.addEventListener("open", () => {
@@ -48,7 +53,8 @@ export function connectServer(url: string): ServerClient {
       connected = false;
       awaitingReply = false;
       latestMove = null;
-      setTimeout(open, backoff);
+      if (closed) return;
+      reconnectTimer = window.setTimeout(open, backoff);
       backoff = Math.min(MAX_BACKOFF_MS, backoff * 2);
     };
     ws.addEventListener("close", onClose);
@@ -71,6 +77,15 @@ export function connectServer(url: string): ServerClient {
       if (socket.readyState !== WebSocket.OPEN) return;
       awaitingReply = true;
       socket.send(JSON.stringify(state));
+    },
+    close() {
+      closed = true;
+      window.clearTimeout(reconnectTimer);
+      const ws = socket;
+      socket = null;
+      connected = false;
+      latestMove = null;
+      ws?.close();
     },
   };
 }

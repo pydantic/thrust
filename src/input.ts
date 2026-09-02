@@ -27,6 +27,7 @@ export function attachKeyboard(target: Window): Keyboard {
   };
 
   target.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented) return;
     if (setKey(e.code, true)) e.preventDefault();
     if (e.code === "KeyR" || e.code === "Space") {
       respawnRequested = true;
