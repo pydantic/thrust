@@ -1,4 +1,4 @@
-import { isMoveMessage, type MoveMessage, type StateMessage } from "./protocol";
+import { isAbortMessage, isMoveMessage, type MoveMessage, type StateMessage } from "./protocol";
 
 const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 5000;
@@ -9,6 +9,8 @@ export interface ServerClient {
   readonly connected: boolean;
   /** Most recent move from the server, or null if stale/none. */
   readonly latestMove: MoveMessage | null;
+  /** Set once the server has aborted the flight: why the script died. */
+  readonly abortReason: string | null;
   /** Sends the state if the socket is open and no reply is outstanding. */
   send(state: StateMessage): void;
   /** Close the socket and stop reconnecting. */
@@ -21,6 +23,7 @@ export function connectServer(url: string): ServerClient {
   let awaitingReply = false;
   let latestMove: MoveMessage | null = null;
   let latestMoveAt = 0;
+  let abortReason: string | null = null;
   let backoff = MIN_BACKOFF_MS;
   let closed = false;
   let reconnectTimer: number | undefined;
@@ -45,6 +48,10 @@ export function connectServer(url: string): ServerClient {
         awaitingReply = false;
         latestMove = parsed;
         latestMoveAt = performance.now();
+      } else if (isAbortMessage(parsed)) {
+        awaitingReply = false;
+        latestMove = null;
+        abortReason = parsed.reason;
       }
     });
     const onClose = (): void => {
@@ -65,6 +72,9 @@ export function connectServer(url: string): ServerClient {
   return {
     get connected() {
       return connected;
+    },
+    get abortReason() {
+      return abortReason;
     },
     get latestMove() {
       if (latestMove !== null && performance.now() - latestMoveAt > MOVE_TTL_MS) {

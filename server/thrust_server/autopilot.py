@@ -12,16 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import logfire
+from logfire.propagate import attach_context, get_context
 from pydantic import BaseModel, Field
 from pydantic_ai import AgentRunResult, ModelMessage
 from pydantic_monty import (
     AsyncMonty,
-    CollectString,
     MontyError,
     MontyRuntimeError,
     MontySyntaxError,
@@ -57,7 +58,7 @@ class Status:
     """The rocket after a move was applied for one tick. Returned by `update`."""
 
     status: str
-    """`"flying"`, `"landed"`, `"crashed"` or `"timeout"`. Over once it is not flying."""
+    """`"flying"`, `"landed"`, `"crashed"`, `"timeout"` or `"aborted"`. Over once not flying."""
     tick: int
     time: float
     """Seconds since the start of the flight (`tick * physics.dt`). This is the score."""
@@ -218,7 +219,7 @@ class RunReport(BaseModel):
     """Tail of what the script printed."""
 
     def feedback(self) -> str:
-        """The `submit_script` tool result for this flight, so the agent can improve."""
+        """The `start_flight` tool result for this flight, so the agent can improve."""
         parts = [self.outcome]
         if self.error:
             parts.append(f'It raised this error:\n```\n{self.error}\n```')
@@ -235,7 +236,7 @@ class PilotMemory(BaseModel):
     """Shared across connections so each flight can learn from the previous ones.
 
     `messages` is the running conversation with the script-writing agent, in which every
-    script is a `submit_script` tool call whose result is the flight report; it only ever
+    script is a `start_flight` tool call whose result is the flight report; it only ever
     holds completed script/report pairs. With a `path` the memory is written to disk as
     JSON after every report and loaded again on start, so a server restart carries on
     iterating on the same script. A flight cut short by a restart is simply not in it.
@@ -267,7 +268,7 @@ class PilotMemory(BaseModel):
         return self.history[-1] if self.history else None
 
     def record(self, report: RunReport, result: AgentRunResult[PilotScript]) -> None:
-        """Store the report as the result of the `submit_script` call that wrote the script."""
+        """Store the report as the result of the `start_flight` call that wrote the script."""
         self.history.append(report)
         del self.history[:-HISTORY_SIZE]
         self.messages = result.all_messages(output_tool_return_content=report.feedback())
@@ -295,7 +296,10 @@ class Flight:
         self._ask_ai = ask_ai
         self._states: asyncio.Queue[State | None] = asyncio.Queue()
         self._moves: asyncio.Queue[Move | None] = asyncio.Queue()
-        self._output = CollectString()
+        self._output: list[str] = []
+        self._pending_line = ''
+        self._log_context: Mapping[str, str] | None = None
+        """The `pilot script` span's context: monty calls the print callback outside it."""
         self._closed = False
         self._task: asyncio.Future[None] | None = None
         self.first_state = first_state
@@ -312,7 +316,16 @@ class Flight:
 
     @property
     def output(self) -> str:
-        return self._output.output
+        return ''.join(self._output) + self._pending_line
+
+    def _on_print(self, stream: str, text: str) -> None:
+        """Collect the script's print() output and log each complete line."""
+        self._pending_line += text
+        *lines, self._pending_line = self._pending_line.split('\n')
+        with attach_context(self._log_context or {}):
+            for line in lines:
+                self._output.append(line + '\n')
+                logfire.info('script: {line}', line=line, stream=stream, tick=self.last_state.tick)
 
     async def _run(self) -> None:
         externals: dict[str, object] = {
@@ -320,22 +333,34 @@ class Flight:
             'ai': self._ask_ai,
             **{cls.__name__: cls for cls in SANDBOX_TYPES},
         }
-        try:
-            async with self._pool.checkout(
-                script_name='pilot.py', limits=LIMITS, dataclass_registry=SANDBOX_TYPES
-            ) as session:
-                await session.feed_run(
-                    self.code,
-                    inputs=script_inputs(self.first_state),
-                    external_lookup=externals,
-                    print_callback=self._output,
-                )
-        except MontyError as exc:
-            if not self._closed:
-                self.error = display_error(exc)
-                logger.error('pilot script failed:\n%s', self.error)  # noqa: TRY400 - the display is the traceback
-        finally:
-            self._moves.put_nowait(None)
+        # One span for the whole script run; its prints and outcome nest inside it.
+        with logfire.span(
+            'pilot script',
+            code=self.code,
+            lines=self.code.count('\n') + 1,
+            strategy=self.result.output.strategy,
+        ) as span:
+            self._log_context = get_context()
+            try:
+                async with self._pool.checkout(
+                    script_name='pilot.py', limits=LIMITS, dataclass_registry=SANDBOX_TYPES
+                ) as session:
+                    returned = await session.feed_run(
+                        self.code,
+                        inputs=script_inputs(self.first_state),
+                        external_lookup=externals,
+                        print_callback=self._on_print,
+                    )
+                span.set_attribute('returned', returned)
+            except MontyError as exc:
+                if not self._closed:
+                    self.error = display_error(exc)
+                    span.set_attribute('error', self.error)
+                    span.record_exception(exc)
+            finally:
+                span.set_attribute('ticks_controlled', self.ticks_controlled)
+                span.set_attribute('status', self.last_state.status)
+                self._moves.put_nowait(None)
 
     async def _update(self, move: object) -> Status:
         if self._closed:
@@ -362,7 +387,7 @@ class Flight:
             move = await asyncio.wait_for(self._moves.get(), MOVE_TIMEOUT_S)
         except TimeoutError:
             self.error = f'the script took more than {MOVE_TIMEOUT_S:.0f} s to call update()'
-            logger.error('pilot script abandoned: %s', self.error)  # noqa: TRY400 - nothing to trace
+            logfire.error('pilot script abandoned', error=self.error)
             await self.close()
             return None
         if move is None:
@@ -494,7 +519,7 @@ async def make_plan(
 class Pilot(Protocol):
     """What the websocket handler needs from a controller."""
 
-    async def decide(self, state: State) -> models.Move: ...
+    async def decide(self, state: State) -> models.Move | models.Abort: ...
 
     async def close(self) -> None: ...
 
@@ -516,8 +541,9 @@ class ScriptPilot:
     """Flies one connection's single flight with the script from `GET /plan`.
 
     The first state starts the script; a terminal state (or the connection closing)
-    ends it and records the report against the plan's `submit_script` call. States that
-    arrive after that get idle moves.
+    ends it and records the report against the plan's `start_flight` call. If the script
+    dies the flight is aborted on the spot rather than left to drift. States that arrive
+    after that get idle moves.
     """
 
     def __init__(
@@ -534,13 +560,11 @@ class ScriptPilot:
         self._flight: Flight | None = None
         self._finished = False
 
-    async def decide(self, state: State) -> models.Move:
+    async def decide(self, state: State) -> models.Move | models.Abort:
         if self._finished:
             return models.Move()
         flight = self._flight
         if flight is None:
-            code = self._plan.output.code
-            logger.info('flying planned script (%d lines):\n%s', code.count('\n') + 1, code)
             flight = self._flight = Flight(self._pool, self._plan, state, self._ask_ai)
             flight.start()
         else:
@@ -549,6 +573,10 @@ class ScriptPilot:
         if state.status != FLYING:
             await self._finish()
         if move is None:
+            if flight.error is not None and not self._finished:
+                # The script raised: end the flight now, with the exception on show.
+                await self._finish()
+                return models.Abort(reason=flight.error.strip().splitlines()[-1])
             return models.Move()
         return models.Move(thrust=move.thrust, left=move.left, right=move.right)
 
@@ -560,7 +588,15 @@ class ScriptPilot:
         await flight.close()
         report = flight.report()
         self._memory.record(report, flight.result)
-        logger.info('flight over: %s', report.outcome)
+        logfire.info(
+            'flight over: {outcome}',
+            outcome=report.outcome,
+            status=flight.last_state.status,
+            time=flight.last_state.tick * flight.last_state.physics.dt,
+            ticks_controlled=flight.ticks_controlled,
+            error=report.error,
+            output=report.output,
+        )
 
     async def close(self) -> None:
         await self._finish()

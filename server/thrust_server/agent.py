@@ -64,23 +64,15 @@ physics: Physics
 
 SYSTEM_PROMPT = f"""\
 You write the autopilot for a 2D rocket lander game. Submit the complete Python script with
-the `submit_script` tool; its `code` argument is run unchanged in a sandbox and flies one
+the `start_flight` tool; its `code` argument is run unchanged in a sandbox and flies one
 flight from start to finish. The tool's result tells you how that flight went, and you
-then submit the next script.
+then try a different strategy.
 
 ## How the script runs
 
-- The sandbox is pydantic-monty, a restricted Python interpreter. Available modules:
-  `math` (but no `math.hypot`; use `math.sqrt(dx*dx + dy*dy)`), `json`, `dataclasses`,
-  `typing`, `collections`. There is no `random`, `time`, `os`, `bisect` or anything else.
-  Functions, plain classes, closures, comprehensions, try/except and f-strings all work.
-  Top-level `await` is allowed and expected; do not wrap the script in `asyncio.run`.
-- Not implemented, so never use them: `%` string formatting and `str.format` (only
-  f-strings like `f"{{x:.1f}}"`), `yield`, `match`, class inheritance (so no custom
-  exception classes; raise `ValueError` etc.), and arithmetic on booleans (`right - left`
-  or `thrust * 9` fail; write `(1 if right else 0)`). A script that trips over one of these
-  crashes before it has flown a metre.
-- These names are predefined. Do not define, import or shadow them:
+The sandbox is a restricted Python interpreter.
+
+These names are predefined. Do not define, import or shadow them:
 
 ```python
 {api_stub()}
@@ -140,43 +132,10 @@ apply left/right with a dead band, rather than flipping the inputs every tick.
 ## Goal
 
 Take off from the launch pad, fly to the landing pad and land on it as quickly as you can.
-Time to touchdown is the score, but a crash scores nothing, so land reliably first and
-fast second.
+Time to touchdown is the score, but a crash scores nothing.
 
-## Landing rules
-
-Contact happens when any corner is at or below the terrain. It counts as a landing only
-if both base corners are within `pad.x1..pad.x2`, `|angle| < landing_max_angle`,
-`|vy| < landing_max_vy` and `|vx| < landing_max_vx`. The same gentle contact on the launch
-pad just rests there (still flying). Any other contact is a crash. So arrive above the
-pad centre, upright, slow, and descend under control for the last few metres.
-
-## A good approach
-
-Cascaded control: decide a desired velocity from where you are (climb to cruise
-altitude, cross to the pad, descend), turn the velocity error into a desired
-acceleration, add gravity and cancel the wind drag to get the thrust vector you need,
-point the nose along it (limit the tilt near the ground) and fire when the acceleration
-needed along the nose exceeds about half of `thrust_accel`. Slow the descent as the
-ground gets close and hold position if crosswind pushes you off the pad. Fast times
-come from committing to a decisive climb and crossing, not from a timid hover.
-
-Skeleton:
-
-```python
-import math
-
-def ground(x):
-    ...  # interpolate `terrain`
-
-s = status
-while s.status == "flying":
-    move = Move(thrust=..., left=..., right=...)
-    s = await update(move)
-    if s.tick % 60 == 0:
-        print(f"t={{s.time:.1f}} x={{s.x:.1f}} y={{s.y:.1f}} vx={{s.vx:.1f}} vy={{s.vy:.1f}}")
-print("finished", s.status, f"{{s.time:.1f}} s")
-```
+You should aim to get significantly faster each time you fly, better to crash and learn than
+be conservative.
 """
 
 MAX_HISTORY_TURNS = 6
@@ -188,7 +147,7 @@ def trim_history(messages: list[ModelMessage]) -> list[ModelMessage]:
 
     Runs before every model request via the `ProcessHistory` capability, and the trimmed
     list is what the run stores, so the conversation in `PilotMemory` stays bounded. After
-    the opening prompt the history alternates a response carrying the `submit_script` call
+    the opening prompt the history alternates a response carrying the `start_flight` call
     and a request carrying its result, so the tail must start on a response.
     """
     if len(messages) <= 1 + 2 * MAX_HISTORY_TURNS:
@@ -205,7 +164,7 @@ pilot_agent: Agent[None, PilotScript] = Agent(
     instructions=SYSTEM_PROMPT,
     output_type=ToolOutput(
         PilotScript,
-        name='submit_script',
+        name='start_flight',
         description=(
             'Submit the script for the next flight, with a short strategy for the player'
             ' watching. Returns how the flight went.'
@@ -234,7 +193,7 @@ async def write_pilot(memory: PilotMemory) -> AgentRunResult[PilotScript]:
     """Ask for the next script, continuing the conversation held in `memory`.
 
     The returned run is handed back to `PilotMemory.record` with the flight report, which
-    becomes the result of its `submit_script` call; until then it belongs to the flight.
+    becomes the result of its `start_flight` call; until then it belongs to the flight.
     """
     if memory.messages:
         return await pilot_agent.run(message_history=memory.messages)

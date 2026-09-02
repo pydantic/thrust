@@ -73,13 +73,17 @@ client only exists while "Enable auto-pilot" is ticked in the start dialog (`src
 overlay in `index.html`); unticking it closes the socket. The dialog is minimal (the two checkboxes
 plus "Start" for the map already shown) until the URL carries `?seed=N`, which `show()` checks each time.
 Auto-replay is never persisted; auto-pilot is. The game loop pauses while the dialog is
-open, and a landed/crashed/timeout outcome reopens it after a short delay, or respawns the same seed
+open, and a landed/crashed/timeout/aborted outcome reopens it after a short delay, or respawns the same seed
 when auto-replay is ticked. The 90 s flight cap (`PHYSICS.maxFlightTime`) is enforced in `src/main.ts`
 where game time is counted, not in `step`. The socket survives restarts, so
 the server side flies one flight per connection (`ScriptPilot`): the first state starts the planned
 script and a terminal state, or the disconnect, records a `RunReport` in the process-wide
-`PilotMemory`. `make_plan` (behind `GET /plan`) asks the agent for the next script and stores the run
-result in `app.state.plan` for the next connection; `memory.last_state` is what pre-flight checks use. The agent's output is a `submit_script` tool call; `PilotMemory`
+`PilotMemory`; a script exception ends the flight at once with an `{type: "abort"}` reply, which the
+client turns into status `aborted`. Logfire (`logfire.configure` in `main.py`, console output without a
+token) carries the structure: a `flight` span per connection, inside it a `pilot script` span around
+the whole sandbox run (code and strategy as attributes, every printed line as a nested log, return
+value or error and ticks controlled set when it ends), then a `flight over` log with the report. `make_plan` (behind `GET /plan`) asks the agent for the next script and stores the run
+result in `app.state.plan` for the next connection; `memory.last_state` is what pre-flight checks use. The agent's output is a `start_flight` tool call; `PilotMemory`
 (a pydantic model persisted to `THRUST_MEMORY_FILE`, default `server/pilot_memory.json`, on every
 report) keeps the message history; `write_pilot` returns the `AgentRunResult`, which travels with the
 `Flight`, and `record(report, result)` stores `all_messages(output_tool_return_content=report.feedback())`

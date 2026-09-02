@@ -106,24 +106,24 @@ def take_pilot(websocket: WebSocket) -> Pilot:
 async def ws(websocket: WebSocket) -> None:
     """One flight per connection: the client connects after `GET /plan` and hangs up after."""
     await websocket.accept()
-    logger.info('client connected')
     pilot = take_pilot(websocket)
     memory: PilotMemory = websocket.app.state.memory
     first = True
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            try:
-                state = State.model_validate_json(raw)
-            except ValidationError:
-                logger.warning('invalid state message', exc_info=True)
-                continue
-            if first:
-                first = False
-                memory.last_state = state
-            move = await pilot.decide(state)
-            await websocket.send_text(move.model_dump_json())
-    except WebSocketDisconnect:
-        logger.info('client disconnected')
-    finally:
-        await pilot.close()
+    with logfire.span('flight', pilot=type(pilot).__name__):
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    state = State.model_validate_json(raw)
+                except ValidationError:
+                    logger.warning('invalid state message', exc_info=True)
+                    continue
+                if first:
+                    first = False
+                    memory.last_state = state
+                reply = await pilot.decide(state)
+                await websocket.send_text(reply.model_dump_json())
+        except WebSocketDisconnect:
+            logger.info('client disconnected')
+        finally:
+            await pilot.close()

@@ -116,6 +116,13 @@ Server to client:
 {"type": "move", "thrust": true, "left": false, "right": false}
 ```
 
+If the script raises, the server answers the next state with an abort instead of a
+move and the game ends the flight with status `aborted`, showing the exception:
+
+```json
+{"type": "abort", "reason": "AttributeError: 'Physics' object has no attribute 'gravity'"}
+```
+
 Before connecting, the client calls `GET /plan`, which has the agent write and
 pre-check the script for the next flight and answers with the script's own summary,
 shown under the HUD for the whole run:
@@ -139,7 +146,7 @@ The TypeScript types are in `src/protocol.ts` and the pydantic models in
 that writes a complete Python script for one flight. Its instructions describe the
 game, the exact physics, the goal and the sandbox API. The agent holds one conversation
 across all flights: the first message asks for a script, each script is submitted
-through a `submit_script` tool call, and the flight's outcome (how it ended, any
+through a `start_flight` tool call, and the flight's outcome (how it ended, any
 traceback, the last lines printed) goes back as that tool call's result. `GET /plan`
 writes the script for the next flight and the following websocket connection flies
 it, so a session is a loop of plan, fly, report, with the opening message and the

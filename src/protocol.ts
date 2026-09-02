@@ -1,6 +1,7 @@
 /** Messages exchanged with the FastAPI server over the WebSocket. */
 
-export type Status = "flying" | "landed" | "crashed" | "timeout";
+/** `aborted`: the auto-pilot script died, so the server cut the flight short. */
+export type Status = "flying" | "landed" | "crashed" | "timeout" | "aborted";
 
 export interface Vec2 {
   x: number;
@@ -86,6 +87,18 @@ export interface PlanResponse {
 export function isPlanResponse(value: unknown): value is PlanResponse {
   if (typeof value !== "object" || value === null) return false;
   return typeof (value as Record<string, unknown>).strategy === "string";
+}
+
+/** Server -> client: the script raised, so the flight is over. Sent in place of a move. */
+export interface AbortMessage {
+  type: "abort";
+  reason: string;
+}
+
+export function isAbortMessage(value: unknown): value is AbortMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return v.type === "abort" && typeof v.reason === "string";
 }
 
 export function isMoveMessage(value: unknown): value is MoveMessage {

@@ -4,7 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Status = Literal['flying', 'landed', 'crashed', 'timeout']
+Status = Literal['flying', 'landed', 'crashed', 'timeout', 'aborted']
+"""`aborted`: the auto-pilot script died and the server cut the flight short."""
 
 
 class Vec2(BaseModel):
@@ -84,6 +85,13 @@ class Plan(BaseModel):
 
     strategy: str
     """The script's own description of how it intends to fly."""
+
+
+class Abort(BaseModel):
+    """Server -> client, in place of a move: the script raised, so the flight is over."""
+
+    type: Literal['abort'] = 'abort'
+    reason: str
 
 
 class Move(BaseModel):

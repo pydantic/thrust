@@ -137,6 +137,8 @@ function resultText(outcome: Exclude<Status, "flying">, seconds: string): string
       return `Crashed after${seconds}`;
     case "timeout":
       return `Out of time after${seconds}`;
+    case "aborted":
+      return `Script failed after${seconds}`;
   }
 }
 

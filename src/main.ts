@@ -201,12 +201,16 @@ function main(): void {
       if (rocket.status === "flying") {
         game.time += DT;
         if (game.time >= PHYSICS.maxFlightTime) rocket.status = "timeout";
+        // The auto-pilot script died: the flight is over, with the reason on show.
+        if (server?.abortReason != null) rocket.status = "aborted";
       }
       server?.send(buildState(game, windAtRocket));
       if (rocket.status !== "flying" && endTimer === undefined) {
         // One flight per connection: the server has seen the outcome, so
         // after a moment drop the socket and either replay or ask what next.
-        const summary = { result: rocket.status, time: game.time, seed: world.seed };
+        const summary: ShowOptions = { result: rocket.status, time: game.time, seed: world.seed };
+        const reason = server?.abortReason;
+        if (reason != null) summary.error = `The auto-pilot script failed: ${reason}`;
         endTimer = window.setTimeout(() => {
           disconnect();
           if (autoReplay) void beginFlight(game.world.seed);

@@ -26,7 +26,7 @@ from pydantic_monty import AsyncMonty
 from thrust_server import agent
 from thrust_server.autopilot import PilotMemory, PilotScript, RunReport, ScriptPilot, make_plan
 from thrust_server.main import app
-from thrust_server.models import Move, Physics, State
+from thrust_server.models import Abort, Move, Physics, State
 
 pytestmark = pytest.mark.anyio
 
@@ -92,13 +92,13 @@ STRATEGY = 'Go straight up, then drift over and land.'
 def submit(code: str) -> ModelResponse:
     """A model reply that submits `code` through the output tool."""
     args = {'code': code, 'strategy': STRATEGY}
-    return ModelResponse(parts=[ToolCallPart(tool_name='submit_script', args=args)])
+    return ModelResponse(parts=[ToolCallPart(tool_name='start_flight', args=args)])
 
 
 def fake_pilot_agent(model: FunctionModel) -> Agent[None, PilotScript]:
     return Agent(
         model,
-        output_type=ToolOutput(PilotScript, name='submit_script'),
+        output_type=ToolOutput(PilotScript, name='start_flight'),
         capabilities=[ProcessHistory(agent.trim_history)],
     )
 
@@ -114,6 +114,12 @@ def scripted_pilot(monkeypatch: pytest.MonkeyPatch, *scripts: str) -> list[list[
 
     monkeypatch.setattr(agent, 'pilot_agent', fake_pilot_agent(FunctionModel(model)))
     return seen
+
+
+async def decide_move(pilot: ScriptPilot, state: State) -> Move:
+    reply = await pilot.decide(state)
+    assert isinstance(reply, Move), reply
+    return reply
 
 
 @pytest.fixture
@@ -132,14 +138,14 @@ async def test_script_controls_each_tick(pool: AsyncMonty, monkeypatch: pytest.M
     scripted_pilot(monkeypatch, THRUST_EVERY_OTHER_TICK)
     memory = PilotMemory()
     pilot = ScriptPilot(pool, memory, await plan(pool, memory), fake_ai)
-    moves = [await pilot.decide(make_state(tick)) for tick in range(4)]
+    moves = [await decide_move(pilot, make_state(tick)) for tick in range(4)]
     assert [m.thrust for m in moves] == [True, False, True, False]
     assert moves[0].right is True
     assert moves[1].right is False
 
-    landed = await pilot.decide(make_state(4, 'landed'))
+    landed = await decide_move(pilot, make_state(4, 'landed'))
     assert landed == Move()  # the script sees the landing and exits
-    assert (await pilot.decide(make_state(5, 'landed'))) == Move()  # flight over: idle
+    assert (await decide_move(pilot, make_state(5, 'landed'))) == Move()  # flight over: idle
     await pilot.close()
 
     report = memory.last_run
@@ -151,7 +157,7 @@ async def test_script_controls_each_tick(pool: AsyncMonty, monkeypatch: pytest.M
     assert len(memory.history) == 1  # close() after the landing does not record twice
 
 
-async def test_script_error_is_reported_and_rocket_idles(
+async def test_script_error_aborts_the_flight(
     pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scripted_pilot(
@@ -165,14 +171,18 @@ async def test_script_error_is_reported_and_rocket_idles(
     memory = PilotMemory()
     pilot = ScriptPilot(pool, memory, await plan(pool, memory), fake_ai)
     for tick in range(5):
-        assert (await pilot.decide(make_state(tick))).thrust is True
-    assert (await pilot.decide(make_state(5))) == Move()  # the script has died: idle
-    await pilot.decide(make_state(6, 'crashed'))
+        assert (await decide_move(pilot, make_state(tick))).thrust is True
+    reply = await pilot.decide(make_state(5))  # the script dies: the flight is aborted now
+    assert isinstance(reply, Abort)
+    assert reply.reason == 'ZeroDivisionError: division by zero'
     report = memory.last_run
     assert report is not None
     assert report.error is not None
     assert 'ZeroDivisionError' in report.error
+    assert report.outcome.startswith('The flight was cut short')
     assert 'stopped controlling the rocket after 5 ticks' in report.outcome
+    assert (await decide_move(pilot, make_state(6, 'aborted'))) == Move()  # over: idle
+    assert len(memory.history) == 1
 
 
 async def test_disconnect_mid_flight_records_a_cut_short_report(

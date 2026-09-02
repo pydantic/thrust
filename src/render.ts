@@ -1,6 +1,6 @@
 import type { Inputs, Rocket } from "./physics";
 import { ROCKET_HALF_BASE, ROCKET_HEIGHT, ROCKET_VERTICES, toWorld } from "./physics";
-import type { Vec2 } from "./protocol";
+import type { Status, Vec2 } from "./protocol";
 import { type WindField, windAt } from "./wind";
 import { terrainHeightAt, type World } from "./world";
 
@@ -34,6 +34,14 @@ export interface Frame {
   /** The auto-pilot script's own description of its plan, shown under the HUD. */
   strategy: string | null;
 }
+
+const OVERLAY_TEXT: Record<Status, string> = {
+  flying: "",
+  landed: "Landed!",
+  crashed: "Crashed",
+  timeout: "Out of time",
+  aborted: "Script failed",
+};
 
 /** The HUD text is refreshed at most this often so the numbers are readable. */
 const HUD_INTERVAL_MS = 100;
@@ -340,12 +348,7 @@ export class Renderer {
     });
 
     if (rocket.status !== "flying" && !frame.paused) {
-      const msg =
-        rocket.status === "landed"
-          ? "Landed!"
-          : rocket.status === "crashed"
-            ? "Crashed"
-            : "Out of time";
+      const msg = OVERLAY_TEXT[rocket.status];
       ctx.font = "bold 36px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
       const cx = this.offsetX + (frame.world.info.width * this.scale) / 2;
