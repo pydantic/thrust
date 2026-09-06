@@ -229,6 +229,35 @@ async def test_game_going_away_ends_the_script_quietly(
     assert result.report('code').outcome.startswith('The flight was cut short after 0.0 s (tick 1)')
 
 
+async def test_move_edited_after_construction_is_sent_as_edited(
+    pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripted_pilot(
+        monkeypatch,
+        'm = Move()\n'
+        'm.thrust = True\n'
+        's = await update(m)\n'
+        'm.left = True\n'
+        's = await update(m)\n'
+        'assert type(s) is Status and s.tick == 2, s\n'
+        'assert type(pad) is Pad and pad.x1 == 120\n',
+    )
+    memory = PilotMemory()
+    _, replies = await fly(pool, await plan(pool, memory), [make_state(t) for t in range(3)])
+    assert replies[:2] == [Move(thrust=True), Move(thrust=True, left=True)]
+
+
+async def test_update_rejects_anything_but_a_move(
+    pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripted_pilot(monkeypatch, 'class Foo:\n    pass\nawait update(Foo())\n')
+    memory = PilotMemory()
+    result, replies = await fly(pool, await plan(pool, memory), [make_state(0)])
+    assert result.error is not None
+    assert 'TypeError: update() expects a Move, got Foo' in result.error
+    assert replies == [Abort(reason='TypeError: update() expects a Move, got Foo')]
+
+
 async def test_script_ignoring_flight_over_is_cancelled(
     pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
 ) -> None:

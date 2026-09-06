@@ -10,6 +10,7 @@ returns once the next state arrives. `make_plan` asks the agent for the next scr
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -17,10 +18,13 @@ from pathlib import Path
 
 import logfire
 from logfire.propagate import attach_context, get_context
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import AgentRunResult, ModelMessage
 from pydantic_monty import (
     AsyncMonty,
+    ClassInstance,
+    ClassType,
+    MontyClassProxy,
     MontyError,
     MontyRuntimeError,
     MontySyntaxError,
@@ -126,14 +130,33 @@ class Physics:
 
 SANDBOX_TYPES: list[type] = [Move, Status, Pad, World, Physics]
 
+SANDBOX_PRELUDE = f'from dataclasses import dataclass\n\n{inspect.getsource(Move)}'
+"""Run in the session before the script. `Move` is the one class the script builds itself,
+so it is defined inside the sandbox: a host class handed in as a `ClassType` would let the
+script construct it, but attributes it then set would stay on the sandbox's copy and never
+reach `update`. The other classes only ever travel host to sandbox, as `ClassInstance`s."""
+
+SANDBOX_CLASSES = {
+    cls.__name__: ClassType(cls, init=True, instance_eager_attrs='all')
+    for cls in SANDBOX_TYPES
+    if cls is not Move
+}
+"""The remaining classes by name, so the script can use them in annotations and `type(status)`
+is the same `Status` the name refers to."""
+
 # --- host side ---------------------------------------------------------------------------
 
 FLYING = 'flying'
 
-LIMITS: ResourceLimits = {'max_duration_secs': 30, 'max_memory': 256 * 1024 * 1024}
+LIMITS: ResourceLimits = {
+    'max_duration_secs': 60,
+    'max_memory': 256 * 1024 * 1024,
+    'max_suspensions': 10_000,
+}
 """Sandbox limits per flight. `max_duration_secs` is compute only: time spent waiting for
 the game inside `update` or for the helper model inside `ai` does not count, so it also
-catches a script that stalls."""
+catches a script that stalls. Every `update` and `ai` call is a suspension, and a full
+90 s flight at 60 Hz is 5400 ticks, so the default of 1000 would end the script mid-air."""
 
 OUTPUT_TAIL_LINES = 40
 HISTORY_SIZE = 10
@@ -193,12 +216,13 @@ def world_from(world: models.WorldInfo) -> World:
 def script_inputs(state: State) -> dict[str, object]:
     """The globals a script starts with, built from the first state of the flight."""
     return {
-        'status': status_from_state(state),
-        'pad': pad_from(state.pad),
-        'launch_pad': pad_from(state.launch_pad),
+        **SANDBOX_CLASSES,
+        'status': ClassInstance(status_from_state(state), eager_attrs='all'),
+        'pad': ClassInstance(pad_from(state.pad), eager_attrs='all'),
+        'launch_pad': ClassInstance(pad_from(state.launch_pad), eager_attrs='all'),
         'terrain': [(x, y) for x, y in state.terrain],
-        'world': world_from(state.world),
-        'physics': physics_from(state.physics),
+        'world': ClassInstance(world_from(state.world), eager_attrs='all'),
+        'physics': ClassInstance(physics_from(state.physics), eager_attrs='all'),
     }
 
 
@@ -401,16 +425,13 @@ class GameLink:
         self._next_state = next_state
         self._send_reply = send_reply
 
-    async def update(self, move: object) -> Status:
+    async def update(self, move: object) -> ClassInstance:
         if self.over:
             self.stray_calls += 1
             if self.stray_calls > STRAY_CALLS_LIMIT and self.run is not None:
                 self.run.cancel()
             raise FlightOver(FLIGHT_OVER_MESSAGE)
-        if not isinstance(move, Move):
-            msg = f'update() expects a Move, got {type(move).__name__}'
-            raise TypeError(msg)
-        reply = models.Move(thrust=move.thrust, left=move.left, right=move.right)
+        reply = move_from(move)
         self.samples.append(Sample(self.state, reply))
         await self._send_reply(reply)
         try:
@@ -421,7 +442,20 @@ class GameLink:
         self.ticks += 1
         if self.state.status != FLYING:
             self.over = True
-        return status_from_state(self.state)
+        return ClassInstance(status_from_state(self.state), eager_attrs='all')
+
+
+def move_from(move: object) -> models.Move:
+    """The move a script passed to `update`: an instance of the sandbox's own `Move`."""
+    if not (isinstance(move, MontyClassProxy) and move.name == Move.__name__):
+        name = move.name if isinstance(move, MontyClassProxy) else type(move).__name__
+        msg = f'update() expects a Move, got {name}'
+        raise TypeError(msg)
+    try:
+        return models.Move.model_validate(move.attributes)
+    except ValidationError as exc:
+        msg = f'update() got a bad Move: {exc}'
+        raise TypeError(msg) from None
 
 
 async def fly_script(  # noqa: PLR0913 - the flight's whole interface
@@ -443,20 +477,15 @@ async def fly_script(  # noqa: PLR0913 - the flight's whole interface
     code = plan.output.code
     link = GameLink(first_state, next_state, send_reply)
     prints = PrintCollector()
-    externals: dict[str, object] = {
-        'update': link.update,
-        'ai': ask_ai,
-        **{cls.__name__: cls for cls in SANDBOX_TYPES},
-    }
+    externals: dict[str, object] = {'update': link.update, 'ai': ask_ai}
     error: str | None = None
     with logfire.span(
         'pilot script', code=code, lines=code.count('\n') + 1, strategy=plan.output.strategy
     ) as span:
         prints.context = get_context()
         try:
-            async with pool.checkout(
-                script_name='pilot.py', limits=LIMITS, dataclass_registry=SANDBOX_TYPES
-            ) as session:
+            async with pool.checkout(script_name='pilot.py', limits=LIMITS) as session:
+                await session.feed_run(SANDBOX_PRELUDE)
                 link.run = asyncio.ensure_future(
                     session.feed_run(
                         code,

@@ -57,6 +57,7 @@ app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['GET'])
 logfire.configure(send_to_logfire='if-token-present', service_name='thrust-server')
 logfire.instrument_fastapi(app)
 logfire.instrument_pydantic_ai()
+logfire.instrument_monty()
 
 
 @app.get('/health')
