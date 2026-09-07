@@ -118,21 +118,21 @@ async def ws(websocket: WebSocket) -> None:
     try:
         first = await next_state()
         memory.last_state = first
-        with logfire.span('flight'):
-            result = await fly_script(
-                pool,
-                plan,
-                agent.ask_helper,
-                first_state=first,
-                next_state=next_state,
-                send_reply=send_reply,
-            )
-            report = result.report(plan.output.code)
-            memory.record(report, plan)
-            logfire.info('flight over: {outcome}', outcome=report.outcome, error=report.error)
-            # The client keeps sending the final state for a moment before hanging up.
-            while True:
-                await next_state()
-                await send_reply(Move())
+        result = await fly_script(
+            pool,
+            plan,
+            agent.ask_helper,
+            first_state=first,
+            next_state=next_state,
+            send_reply=send_reply,
+        )
+        report = result.report(plan.output.code)
+        memory.record(report, plan)
+        logfire.info('flight over: {outcome}', outcome=report.outcome, error=report.error)
+        # The client keeps sending the final state for a moment before hanging up, which
+        # ends this loop with a disconnect; outside the span so it is not recorded as an error.
+        while True:
+            await next_state()
+            await send_reply(Move())
     except WebSocketDisconnect:
         logger.info('client disconnected')

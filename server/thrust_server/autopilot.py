@@ -479,13 +479,11 @@ async def fly_script(  # noqa: PLR0913 - the flight's whole interface
     prints = PrintCollector()
     externals: dict[str, object] = {'update': link.update, 'ai': ask_ai}
     error: str | None = None
-    with logfire.span(
-        'pilot script', code=code, lines=code.count('\n') + 1, strategy=plan.output.strategy
-    ) as span:
-        prints.context = get_context()
+    with logfire.span('flight', strategy=plan.output.strategy) as span:
         try:
             async with pool.checkout(script_name='pilot.py', limits=LIMITS) as session:
                 await session.feed_run(SANDBOX_PRELUDE)
+                prints.context = get_context()
                 link.run = asyncio.ensure_future(
                     session.feed_run(
                         code,
