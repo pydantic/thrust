@@ -1,0 +1,19 @@
+server/thrust_server/main.py
+  s_2e9c2c75e1a0e2::t_a29b872d780d48 132-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8505b55a97f179e212112d42ee9e1e7fd2ce7015",
+  "prompts": {},
+  "sessions": {
+    "s_2e9c2c75e1a0e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7cff22b-0cdc-42a6-a213-68c468400ff1",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Samuel Colvin <s@muelcolvin.com>"
+    }
+  }
+}
