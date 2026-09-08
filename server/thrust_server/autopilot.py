@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import logfire
-from logfire.propagate import attach_context, get_context
+from logfire.propagate import get_context
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import AgentRunResult, ModelMessage
 from pydantic_monty import (
@@ -329,10 +329,9 @@ class PrintCollector:
     def on_print(self, stream: str, chunk: str) -> None:
         self._pending += chunk
         *lines, self._pending = self._pending.split('\n')
-        with attach_context(self.context):
-            for line in lines:
-                self.text += line + '\n'
-                logfire.info('script: {line}', line=line, stream=stream)
+        for line in lines:
+            self.text += line + '\n'
+            logfire.info('script: {line}', line=line, stream=stream)
 
     def tail(self) -> str:
         text = self.text + self._pending

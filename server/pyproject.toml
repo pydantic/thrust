@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "logfire[fastapi]>=4.41.0",
-    "pydantic-ai>=2.37.0",
+    "pydantic-ai>=2.41.0",
     "pydantic-monty>=0.0.23",
     "uvicorn[standard]>=0.30",
 ]
@@ -24,6 +24,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
+pydantic-monty = { git = "https://github.com/pydantic/monty", branch = "main", subdirectory = "packages/pydantic-monty" }
+pydantic-monty-client = { git = "https://github.com/pydantic/monty", branch = "main", subdirectory = "crates/monty-python" }
+pydantic-monty-runtime = { git = "https://github.com/pydantic/monty", branch = "main", subdirectory = "crates/monty-runtime" }
 logfire = { git = "https://github.com/pydantic/logfire", branch = "dh/instrument-monty" }
 
 [tool.hatch.build.targets.wheel]
