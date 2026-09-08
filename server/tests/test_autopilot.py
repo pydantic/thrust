@@ -282,7 +282,7 @@ async def test_make_plan_retries_after_preflight_failure(
     pool: AsyncMonty, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scripts = [
-        'print("%.1f" % 1.5)\ns = await update(Move())\n',  # monty has no % formatting
+        'print(1 + "bad")\ns = await update(Move())\n',
         "s = status\nwhile s.status == 'flying':\n    s = await update(Move(thrust=True))\n",
     ]
     scripted_pilot(monkeypatch, *scripts)
